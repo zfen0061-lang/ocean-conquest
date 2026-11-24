@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#b6c8ca">
+<title>海岛战争 · 潮汐航线</title>
+<style>
+:root{color-scheme:light;--ink:#173638;--paper:#f6efdc;--sea:#b6c8ca;--teal:#24534e}
+*{box-sizing:border-box}
+body{margin:0;background:#9cbbbf;color:var(--ink);font:15px/1.45 system-ui,"Microsoft YaHei",sans-serif}
+main{min-height:100dvh;display:grid;place-items:center}
+h2,p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid #693f30;outline-offset:2px}
+button:disabled{cursor:default}
+.map{position:relative;isolation:isolate;width:min(100vw,100dvh,1024px);aspect-ratio:1;background:var(--sea);overflow:hidden;touch-action:none}
+.map canvas,.islands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.island{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;width:45px;height:44px;border:0;padding:0;background:none;pointer-events:auto;touch-action:none;user-select:none}
+.number{display:block;background:var(--badge,#635944);color:#fff7e2;border:1px solid #fff0d2;border-radius:3px;min-width:25px;padding:1px 4px;box-shadow:0 2px 0 #243f4245;font:750 clamp(13px,2.3vw,20px)/1.2 system-ui;font-variant-numeric:tabular-nums}
+.number[data-size=large]{min-width:29px;padding-inline:6px}
+.island[aria-pressed=true] .number{outline:2px solid #1b4850;outline-offset:2px}
+.island small{display:none;position:absolute;top:calc(50% + 14px);padding:1px 4px;background:#f8f2dfef;border-radius:2px;color:#233638;font:650 12px/1.25 system-ui;white-space:nowrap}
+.island:is([aria-pressed=true],:focus-visible) small{display:block}
+.island:is([aria-pressed=true],:focus-visible){z-index:1}
+.hud{position:absolute;z-index:2;inset:10px 10px auto;display:flex;justify-content:flex-end;align-items:center;gap:10px;pointer-events:none}
+.territory-bar{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:2px;width:min(52%,300px);height:8px;padding:1px;background:#efe9d6;border:1px solid #65817e;border-radius:4px;overflow:hidden}
+.territory-bar span{background:var(--side);min-width:0}
+.menu{width:40px;height:38px;border:1px solid #678781;background:#eef0dc;color:#234e4d;border-radius:5px;font-size:20px;font-weight:700;pointer-events:auto}
+.progress,.gesture-hint,.tip,.island-info{position:absolute;z-index:2;left:50%;transform:translateX(-50%);padding:4px 8px;border:1px solid #6b8b84;border-radius:4px;background:#f8f2e3ed;text-align:center;white-space:nowrap;pointer-events:none}
+.progress{top:43px;padding:2px 8px;font-size:12px;font-variant-numeric:tabular-nums}
+.gesture-hint{bottom:46px;font-size:13px}
+.tip{bottom:11px;font-size:12px}
+.island-info{bottom:11px;max-width:calc(100% - 16px);white-space:normal;font-size:12px}
+.panel{position:absolute;z-index:3;left:50%;top:50%;transform:translate(-50%,-50%);width:min(79%,290px);padding:16px;background:var(--paper);text-align:center;border:1px solid #325759;box-shadow:4px 5px 0 #3d606477;border-radius:5px}
+.panel h2,.dock-head h2{font:700 23px/1.25 "Noto Serif SC",SimSun,serif}
+.panel p{margin:5px 0 12px;color:#405b59;font-size:13px}
+.actions{display:flex;justify-content:center;gap:7px;margin-top:9px}
+.actions button,.dock-head button,.dock-grid button{min-height:39px;border:1px solid #798c7e;background:#f6efd9;border-radius:4px;padding:5px 10px}
+.actions button.primary,.dock-grid button[aria-pressed=true]{background:var(--teal);color:#fff8dd;border-color:var(--teal)}
+dialog{width:min(510px,calc(100% - 24px));max-height:calc(100dvh - 24px);border:1px solid #53726d;background:var(--paper);color:var(--ink);padding:16px;border-radius:6px}
+dialog::backdrop{background:#183b407a}
+.dock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.dock-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.dock-grid button{display:grid;justify-items:start;text-align:left;gap:3px;min-width:0}
+.dock-grid button:disabled{opacity:.66}
+.dock-grid canvas{display:block;width:100%;height:auto;background:#b7c9c7;border:1px solid #64867f}
+.dock-grid small{font:600 12px/1.4 system-ui}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+[hidden]{display:none!important}
+@media (max-width:600px) and (orientation:portrait){
+  .map{width:100%;height:100dvh}
+  .island{width:40px;height:40px}
+}
+</style>
+</head>
+<body>
+<main aria-label="海岛战争">
+  <section class="map" id="board" aria-label="作战海图">
+    <canvas id="map" width="1240" height="1240" aria-hidden="true"></canvas>
+    <div class="islands" id="islands"></div>
+    <div class="hud">
+      <div id="territoryBar" class="territory-bar" aria-hidden="true"></div>
+      <button id="openMenu" class="menu" type="button" aria-label="菜单">☰</button>
+    </div>
+    <p id="progress" class="progress" aria-label="战役进度"></p>
+    <p id="tip" class="tip" hidden></p>
+    <p id="islandInfo" class="island-info" hidden></p>
+    <p id="gestureHint" class="gesture-hint" aria-hidden="true" hidden></p>
+    <p id="status" class="sr-only" role="status"></p>
+    <div id="end" class="panel" hidden>
+      <h2 id="resultTitle" role="status"></h2><p id="resultBrief"></p>
+      <div class="actions"><button id="again" type="button">再打一局</button><button id="next" class="primary" type="button">继续</button></div>
+    </div>
+  </section>
+  <dialog id="menuDialog" aria-labelledby="menuTitle">
+    <div class="dock-head"><h2 id="menuTitle">海岛战争</h2><form method="dialog"><button>返回</button></form></div>
+    <div class="actions"><button id="restart" type="button">重开</button><button id="skill" type="button" hidden>顺风令</button><button id="openDock" type="button">舰队外观</button></div>
+  </dialog>
+  <dialog id="dock" aria-labelledby="dockTitle">
+    <div class="dock-head"><h2 id="dockTitle">舰队外观</h2><form method="dialog"><button>返回</button></form></div>
+    <p id="dockProgress"></p><div class="dock-grid" id="dockGrid"></div>
+  </dialog>
+</main>
+<script>
+/* GAME_CODE */
+</script>
+</body>
+</html>

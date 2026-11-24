@@ -1,0 +1,1249 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#b6c8ca">
+<title>海岛战争 · 潮汐航线</title>
+<style>
+:root{color-scheme:light;--ink:#173638;--paper:#f6efdc;--sea:#b6c8ca;--teal:#24534e}
+*{box-sizing:border-box}
+body{margin:0;background:#9cbbbf;color:var(--ink);font:15px/1.45 system-ui,"Microsoft YaHei",sans-serif}
+main{min-height:100dvh;display:grid;place-items:center}
+h2,p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid #693f30;outline-offset:2px}
+button:disabled{cursor:default}
+.map{position:relative;isolation:isolate;width:min(100vw,100dvh,1024px);aspect-ratio:1;background:var(--sea);overflow:hidden;touch-action:none}
+.map canvas,.islands{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.island{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;width:45px;height:44px;border:0;padding:0;background:none;pointer-events:auto;touch-action:none;user-select:none}
+.number{display:block;background:var(--badge,#635944);color:#fff7e2;border:1px solid #fff0d2;border-radius:3px;min-width:25px;padding:1px 4px;box-shadow:0 2px 0 #243f4245;font:750 clamp(13px,2.3vw,20px)/1.2 system-ui;font-variant-numeric:tabular-nums}
+.number[data-size=large]{min-width:29px;padding-inline:6px}
+.island[aria-pressed=true] .number{outline:2px solid #1b4850;outline-offset:2px}
+.island small{display:none;position:absolute;top:calc(50% + 14px);padding:1px 4px;background:#f8f2dfef;border-radius:2px;color:#233638;font:650 12px/1.25 system-ui;white-space:nowrap}
+.island:is([aria-pressed=true],:focus-visible) small{display:block}
+.island:is([aria-pressed=true],:focus-visible){z-index:1}
+.hud{position:absolute;z-index:2;inset:10px 10px auto;display:flex;justify-content:flex-end;align-items:center;gap:10px;pointer-events:none}
+.territory-bar{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:2px;width:min(52%,300px);height:8px;padding:1px;background:#efe9d6;border:1px solid #65817e;border-radius:4px;overflow:hidden}
+.territory-bar span{background:var(--side);min-width:0}
+.menu{width:40px;height:38px;border:1px solid #678781;background:#eef0dc;color:#234e4d;border-radius:5px;font-size:20px;font-weight:700;pointer-events:auto}
+.progress,.gesture-hint,.tip,.island-info{position:absolute;z-index:2;left:50%;transform:translateX(-50%);padding:4px 8px;border:1px solid #6b8b84;border-radius:4px;background:#f8f2e3ed;text-align:center;white-space:nowrap;pointer-events:none}
+.progress{top:43px;padding:2px 8px;font-size:12px;font-variant-numeric:tabular-nums}
+.gesture-hint{bottom:46px;font-size:13px}
+.tip{bottom:11px;font-size:12px}
+.island-info{bottom:11px;max-width:calc(100% - 16px);white-space:normal;font-size:12px}
+.panel{position:absolute;z-index:3;left:50%;top:50%;transform:translate(-50%,-50%);width:min(79%,290px);padding:16px;background:var(--paper);text-align:center;border:1px solid #325759;box-shadow:4px 5px 0 #3d606477;border-radius:5px}
+.panel h2,.dock-head h2{font:700 23px/1.25 "Noto Serif SC",SimSun,serif}
+.panel p{margin:5px 0 12px;color:#405b59;font-size:13px}
+.actions{display:flex;justify-content:center;gap:7px;margin-top:9px}
+.actions button,.dock-head button,.dock-grid button{min-height:39px;border:1px solid #798c7e;background:#f6efd9;border-radius:4px;padding:5px 10px}
+.actions button.primary,.dock-grid button[aria-pressed=true]{background:var(--teal);color:#fff8dd;border-color:var(--teal)}
+dialog{width:min(510px,calc(100% - 24px));max-height:calc(100dvh - 24px);border:1px solid #53726d;background:var(--paper);color:var(--ink);padding:16px;border-radius:6px}
+dialog::backdrop{background:#183b407a}
+.dock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.dock-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.dock-grid button{display:grid;justify-items:start;text-align:left;gap:3px;min-width:0}
+.dock-grid button:disabled{opacity:.66}
+.dock-grid canvas{display:block;width:100%;height:auto;background:#b7c9c7;border:1px solid #64867f}
+.dock-grid small{font:600 12px/1.4 system-ui}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+[hidden]{display:none!important}
+@media (max-width:600px) and (orientation:portrait){
+  .map{width:100%;height:100dvh}
+  .island{width:40px;height:40px}
+}
+</style>
+</head>
+<body>
+<main aria-label="海岛战争">
+  <section class="map" id="board" aria-label="作战海图">
+    <canvas id="map" width="1240" height="1240" aria-hidden="true"></canvas>
+    <div class="islands" id="islands"></div>
+    <div class="hud">
+      <div id="territoryBar" class="territory-bar" aria-hidden="true"></div>
+      <button id="openMenu" class="menu" type="button" aria-label="菜单">☰</button>
+    </div>
+    <p id="progress" class="progress" aria-label="战役进度"></p>
+    <p id="tip" class="tip" hidden></p>
+    <p id="islandInfo" class="island-info" hidden></p>
+    <p id="gestureHint" class="gesture-hint" aria-hidden="true" hidden></p>
+    <p id="status" class="sr-only" role="status"></p>
+    <div id="end" class="panel" hidden>
+      <h2 id="resultTitle" role="status"></h2><p id="resultBrief"></p>
+      <div class="actions"><button id="again" type="button">再打一局</button><button id="next" class="primary" type="button">继续</button></div>
+    </div>
+  </section>
+  <dialog id="menuDialog" aria-labelledby="menuTitle">
+    <div class="dock-head"><h2 id="menuTitle">海岛战争</h2><form method="dialog"><button>返回</button></form></div>
+    <div class="actions"><button id="restart" type="button">重开</button><button id="skill" type="button" hidden>顺风令</button><button id="openDock" type="button">舰队外观</button></div>
+  </dialog>
+  <dialog id="dock" aria-labelledby="dockTitle">
+    <div class="dock-head"><h2 id="dockTitle">舰队外观</h2><form method="dialog"><button>返回</button></form></div>
+    <p id="dockProgress"></p><div class="dock-grid" id="dockGrid"></div>
+  </dialog>
+</main>
+<script>
+'use strict';
+const WIDTH=620, HEIGHT=620, STEP=1/60, CONTACT=14, EPS=1e-8;
+const factions=['中立','青方','朱方','蓝方','赭方'];
+const palette=['#6b5b43','#1a665a','#a94d48','#425e91','#8c602b'];
+const wakes=['#ebdcbd','#b8e1c9','#ecc2ab','#c7d7ec','#edcf9f'];
+const opponents=[
+  {owner:2,first:4.2,interval:4.0,neutralBias:4,raidBias:9},
+  {owner:3,first:5.9,interval:4.6,neutralBias:10,raidBias:5},
+  {owner:4,first:7.0,interval:4.9,neutralBias:7,raidBias:7},
+];
+const originalBattles=[
+  {name:'试潮', lesson:'海军入门', brief:'先占近处的浅沙洲，再向对岸推进。', guide:'先抢浅沙洲和丰汐大岛。等两个方向都攒够兵，再合力攻下北岬。', rivalDelay:14, nodes:[
+    [160,366,'青湾',1,20,'sea',0,false,'medium'],[264,316,'浅沙洲',0,6,'sea',1,false,'small'],
+    [464,145,'北岬',2,20,'sea',2,false,'medium'],[119,153,'白螺岛',0,9,'sea',3,false,'small'],
+    [314,427,'丰汐大岛',0,9,'sea',0,false,'large'],[505,470,'长风屿',0,11,'sea',3,false,'small'],
+  ]},
+  {name:'双帆', lesson:'一笔集结', brief:'圆沙洲的守军比单岛能派出的多。把青湾和白帆港连进同一笔。', guide:'青湾 → 白帆港 → 圆沙洲。滑过的己方港口会加入预览，松手才出兵。', rivalDelay:7, nodes:[
+    [119,360,'青湾',1,29,'sea',0],[254,409,'白帆港',1,30,'sea',1],[332,235,'圆沙洲',0,22,'sea',3],[473,115,'赤岬港',2,23,'sea',2],[502,359,'豆荚岛',0,10,'sea',1],
+  ]},
+  {name:'迎浪', lesson:'航中拦截', brief:'朱方开局会直扑青湾。你可以出航迎击，让较强的一队继续前进。', guide:'同类敌军在途中相遇时等量抵消。20 对 12，剩 8 的一方继续航行。', opening:{at:2.3,side:2,source:2,target:0}, rivalDelay:6, nodes:[
+    [125,359,'青湾',1,41,'sea',3],[253,427,'回船屿',1,23,'sea',1],[477,115,'赤崖',2,34,'sea',2],[508,333,'灯塔湾',2,14,'sea',0],[271,210,'潮声岛',0,11,'sea',1],
+  ]},
+  {name:'分水', lesson:'三方争岛', brief:'两家对手会彼此争岛。盯住他们出兵后空下来的港口。', guide:'本关解锁顺风令。每局一次，让下一批舰船加速 35%，可抢在敌人前抵达。', skill:true,rivalDelay:4,nodes:[
+    [116,361,'青湾',1,39,'sea',0],[255,431,'白帆港',1,35,'sea',1],[462,110,'朱崖',2,25,'sea',2],[527,272,'烈风港',2,20,'sea',3],[104,111,'雾港',3,26,'sea',1],[233,163,'紫杉岛',3,20,'sea',2],[325,268,'中央沙洲',0,13,'sea',0],[457,403,'半月岛',0,10,'sea',1],[111,230,'砂砾岛',0,9,'sea',3],
+  ]},
+  {name:'掠海', lesson:'解锁飞机', brief:'夺下中央空港，即可从那里派出飞机，快速争夺远处的岛。', guide:'飞机比舰船飞得快，能飞越船队，也会被敌机拦截。大空港比小空港补充兵力快。', skill:true,rivalDelay:5,nodes:[
+    [112,368,'潮汐港',1,35,'sea',0],[266,422,'晨湾',1,27,'sea',2],[485,132,'暮云港',2,31,'sea',1],[532,331,'外礁',2,20,'sea',0],[286,224,'中央空港',0,13,'air',3],[130,111,'比翼岛',0,11,'sea',1],
+  ]},
+  {name:'岸防', lesson:'舰队攻坚', brief:'赤石堡有岸防。飞机攻击它时只按六成兵力结算，集结舰船攻坚更合适。', guide:'飞机适合抢空港和绕行，舰船能拦截敌舰，并以完整兵力攻击岸防港。', skill:true,nodes:[
+    [135,356,'南汐港',1,38,'sea',0],[257,428,'白棠港',1,32,'sea',1],[141,132,'鸥翼机场',1,23,'air',2],[488,152,'赤石堡',2,37,'sea',3,true],[513,350,'飞屿机场',2,25,'air',1],[339,260,'石门岛',0,14,'sea',2],
+  ]},
+  {name:'四海', lesson:'四方混战', brief:'另外三个阵营各自扩张。你可以先抢空港，也可以吞并离你最近的一家。', guide:'查看地图上的出兵方向。保存核心港的守军，再把几路舰队投向同一个薄弱目标。', skill:true,rivalDelay:4,nodes:[
+    [114,367,'松沙港',1,44,'sea',0,false,'large'],[260,434,'晨湾',1,37,'sea',1],[510,116,'朱岬',2,31,'sea',2],[540,253,'红帆港',2,22,'sea',1],[100,110,'蓝石',3,28,'sea',2],[224,165,'云门机场',3,18,'air',0],[510,423,'赭金湾',4,30,'sea',3],[386,400,'金帆港',4,22,'sea',1],[95,238,'碎贝岛',0,10,'sea',3],[321,272,'横风空港',0,14,'air',1],
+  ]},
+  {name:'长明', lesson:'四方混战', brief:'三家对手在海峡两侧展开。', guide:'舰队攻打岸防港，空军负责快速增援。可以从兵力较薄的一侧开始扩张。', skill:true,rivalDelay:3,neutralReserve:8,nodes:[
+    [117,353,'青棠港',1,42,'sea',2],[244,429,'大风港',1,37,'sea',1],[116,122,'回雁机场',1,34,'air',3],[494,113,'朱崖',2,29,'sea',0],[539,237,'咸潮港',2,23,'sea',1],[292,117,'苍蓝港',3,27,'sea',3],[480,394,'金水港',4,30,'sea',0],[387,426,'金岬机场',4,21,'air',2],[320,254,'灯塔港',0,21,'sea',3,true],
+  ]},
+];
+function newBattle(i,random=Math.random){
+  const level=levels[i];
+  const nodes=level.nodes.map(([x,y,name,owner,units,kind,shape,fort=false,size='medium'])=>
+    ({x,y,name,owner,units,kind,shape,fort,size,growth:0,pulseUntil:0}));
+  const factionSet=new Set(nodes.map(node=>node.owner));
+  const enemies=opponents.filter(plan=>factionSet.has(plan.owner)).map(plan=>({...plan,at:plan.first+(level.rivalDelay??0)}));
+  let rivalTactics=null;
+  if(random&&level.chapter!==undefined){
+    varyStartingTroops(level,nodes,random);
+    varyIslandPositions(level,nodes,random());
+    if(enemies.length>1){
+      const roll=random();
+      const mode=roll<.30?'pincer':roll<.67?'rivalry':'mixed';
+      rivalTactics={mode,firstRivalOrder:null,nextPincer:mode==='pincer'?18:mode==='mixed'?24:Infinity};
+    }
+  }
+  return {mission:i,nodes,enemies,rivalTactics,
+    fleets:[],effects:[],time:0,nextId:1,mode:'play',winner:0,windSpent:false,openingSent:false};
+}
+
+
+const harborNames=[
+  '青湾 白帆港 贝壳滩 南沙洲 回船屿 北岬 铜锚港 长风湾 东汐岛',
+  '雾岬 石牙湾 黑礁港 双桅屿 倒潮湾 青螺台 沉石港 索桥礁 雨帆岬',
+  '鸥翼岛 晨光湾 鸣沙港 云门岛 南飞屿 风鸟岬 回雁岛 白鹭港 望云台',
+  '赤石港 铜墙堡 金桅湾 铁门岛 赭沙屿 炉火岬 夕照港 枫岩岛 岸炮台',
+  '灯影湾 长明岛 望星屿 海铃港 夜渡湾 岬角站 浮灯港 大风屿 三潮湾',
+].map(names=>names.split(' '));
+
+function seaBattle(name, rows, options={}){
+  return {name,rows, ...options};
+}
+
+const chapters=[
+  {name:'白帆海湾',theme:'#b8cacc',lesson:'集结与拦截', battles:[
+    ...originalBattles.slice(0,3),
+    seaBattle('铜锚港',[
+      '. r18 . . n7',
+      '. . n12 r16 .',
+      'p28 . . . .',
+      '. p23 . n8 .',
+    ],{tip:'先占一个近处的中立岛，让它一边产兵，一边向前线增援。',delay:5}),
+    seaBattle('回船线',[
+      'r23 . . . n9',
+      '. n11 . r20 .',
+      '. . n9 . .',
+      'p43 . . p23 .',
+    ],{tip:'两条航路都能推进。留一座岛在后面存兵，随时接应。',delay:11}),
+    seaBattle('孤锚',[
+      '. . r23 . .',
+      'n7 . . . r17',
+      '. n13 . n9 .',
+      '. . p46 . .',
+    ],{tip:'你只有一个起点。先抢兵少的近岛，开出第二个产兵点。',delay:10}),
+    seaBattle('北岬急航',[
+      '. n8 . . r18',
+      '. . . @n27 .',
+      '. p48 n5 . .',
+      '. . n10 . r16',
+    ],{tip:'从单一港口出发，先抢近处的中立岛，再从短航线向北岬推进。',delay:9}),
+    seaBattle('白帆港口战',[
+      'r24 . . r22 .',
+      '. n11 . . n8',
+      '. . @n18 . .',
+      'p35 . . p28 .',
+    ],{tip:'从两翼调船，中路可以做增援的跳板。',delay:4}),
+  ]},
+  {name:'碎礁水道',theme:'#a9c1be',lesson:'三方争夺', battles:[
+    originalBattles[3],
+    seaBattle('雾口交锋',[
+      'b19 . . r28 .',
+      '. . n16 . r13',
+      'n10 . . b12 .',
+      '. p42 . . p29',
+    ],{tip:'先看哪一家把兵派远，再去打它薄弱的后方。',delay:5}),
+    seaBattle('礁门竞速',[
+      '. b24 . . r19',
+      'n9 . . @n29 .',
+      '. . n8 . r12',
+      'p35 . p27 . .',
+    ],{tip:'对手也会抢中间岛屿。等他们出兵后，再找机会攻打薄弱的后方。',delay:6}),
+    seaBattle('双湾截击',[
+      'r23 . . b24 .',
+      '. r17 . . b18',
+      '. . n10 . .',
+      'p43 . . p32 .',
+    ],{tip:'两侧敌军都有出路。利用海上拦截保护薄弱港口。',delay:4}),
+    seaBattle('退潮时分',[
+      'b23 . n8 . r24',
+      '. . . n14 .',
+      'b13 . p39 . .',
+      '. p34 . . r18',
+    ],{tip:'你从中线起步。先吃掉一侧，再集中转向另一侧。',delay:3}),
+    seaBattle('索桥礁',[
+      '. r23 . b21 .',
+      'n8 . . . r12',
+      '. b13 . @n17 .',
+      'p37 . p29 . .',
+    ],{tip:'夺港后留兵接应，随时防备敌人从另一条航线包抄。',delay:4}),
+    seaBattle('两线合围',[
+      'r26 . b18 . b20',
+      '. n8 . . .',
+      '. . n14 . r15',
+      'p43 . . p38 .',
+    ],{tip:'先抢中间两岛，拓开路线后再从侧面打过去。',delay:4}),
+    seaBattle('雨帆关口',[
+      'b24 . . . r26',
+      '. n12 . r21 .',
+      'b13 . @n22 . .',
+      '. p43 . . p38',
+    ],{tip:'两支舰队可以合兵，也可以一路进攻、一路堵住敌军的来向。',delay:3}),
+  ]},
+  {name:'飞羽群岛',theme:'#b7cbc6',lesson:'空港与空援', battles:[
+    originalBattles[4],
+    seaBattle('风鸟接力',[
+      '. n7 . . r24',
+      'p26a . . n11a .',
+      '. . n12 . r18',
+      'p30 . . . .',
+    ],{tip:'用飞机先抢远处的弱岛，再让近处的舰船推进。',delay:5}),
+    seaBattle('鸥翼抢航',[
+      'b17 . . . r24a',
+      '. . @n27a . .',
+      'p30a . . n8 r13',
+      '. . p32 . .',
+    ],{tip:'可以用飞机抢中间的空港，舰队走另一条航线。',delay:4}),
+    seaBattle('对流',[
+      '. . b20a . r21',
+      'n8 . . r18a .',
+      '. p28a . . n12',
+      'p35 . . p21 .',
+    ],{tip:'敌机和友机迎头相撞会抵消，舰船在下方另外走一路。',delay:4}),
+    seaBattle('云门夜行',[
+      'p28a . n9 . b20',
+      '. . . r20a .',
+      'p25 . n12 . r15',
+      '. p24 . . .',
+    ],{tip:'空港已在你手里。先用快兵打开中间，避免上下两边同时受压。',delay:4}),
+    seaBattle('白鹭机场',[
+      '. r24 . . b22a',
+      'n10 . @n18a . .',
+      '. . . b16 .',
+      'p29a . . p33 .',
+    ],{tip:'舰船夺岛后，飞机能快速补上兵力。',delay:4}),
+    seaBattle('长云回旋',[
+      'r20a . . b21 .',
+      '. . n8 . b14a',
+      'p32 . . r17 .',
+      '. p32a . . p22',
+    ],{tip:'利用两种航速，让距离远的队伍早点出发，一起抵达。',delay:3}),
+    seaBattle('望云台',[
+      'b22 . . r24a .',
+      '. . @n26a . r15',
+      '. n9 . b17 .',
+      '. p42a . . p36',
+    ],{tip:'两家都可能抢空港。留一支预备队，看哪家先露出空档。',delay:3}),
+  ]},
+  {name:'赤岩外海',theme:'#c7c7ae',lesson:'舰船攻坚', battles:[
+    originalBattles[5],
+    seaBattle('铜墙',[
+      '. r23f . . b19',
+      '. . n12 . r15',
+      'p31a . . n9 .',
+      '. p40 . . .',
+    ],{tip:'右侧交给飞机，岸炮堡交给舰队。',delay:5}),
+    seaBattle('铁门急攻',[
+      'r22 . . b20a .',
+      '. . @r39f . .',
+      'p33 . . . n8',
+      '. . p32 . p25a',
+    ],{tip:'从两个海军岛合兵攻打敌方的岸防港。',delay:5}),
+    seaBattle('夕照补给',[
+      '. b23 . . r24f',
+      '. . n12 . n10a',
+      'p35 . . r17 .',
+      '. p25a . . p26',
+    ],{tip:'飞机先抢中立机场。近海的港口交给海军抢。',delay:3}),
+    seaBattle('赤潮堵口',[
+      'r24a . . b18 .',
+      '. n9 . @n21f .',
+      'b15 . n10 . r16',
+      '. p43 . . p37a',
+    ],{tip:'先让舰船攻坚，用飞机给拿下的港口补兵。',delay:4}),
+    seaBattle('岬角穿越',[
+      'b21 . r20f . n8',
+      '. . . b16a .',
+      'p38 . . . r19',
+      '. p30a . p24 .',
+    ],{tip:'你的空军可以飞过海上拦截，优先拿下敌人刚出过兵的岛。',delay:4}),
+    seaBattle('炮台海图',[
+      'r20f . . b22a .',
+      '. . n13 . r17',
+      'p33 . . b15 .',
+      '. p32a . . p31',
+    ],{tip:'把外侧的弱岛连成补给线，再打有岸防的据点。',delay:4}),
+    originalBattles[6],
+  ]},
+  {name:'长明海峡',theme:'#aebdc6',lesson:'多方混战', battles:[
+    seaBattle('浮灯航道',[
+      'b25 . . r24a .',
+      '. n10 . . gold18',
+      'p42 . . @n21f .',
+      '. p32a . . p27',
+    ],{tip:'对手会从侧翼抢港，留意哪一家的舰队已经离岸。',delay:4}),
+    seaBattle('望星快线',[
+      'b19 . r20 . gold18a',
+      '. . n12 . .',
+      'p34a . . @n34a r13',
+      '. p44 . . p25',
+    ],{tip:'中央空港能帮飞机快速转场，也可以沿侧翼寻找兵少的敌岛。',delay:9}),
+    seaBattle('岬角争夺',[
+      'b20 . . r25f .',
+      '. n9 . . gold20',
+      'p40 . n14 . b15a',
+      '. p32a . . p30',
+    ],{tip:'先用最近的舰船清掉一侧。飞机留着补被围的港。',delay:6}),
+    seaBattle('夜渡三湾',[
+      'gold18 . . b21a .',
+      '. r20 . . b16',
+      'p33a . . @n22 .',
+      '. p37 . . p29',
+    ],{tip:'观察敌人之间的交战航线，让自己的舰队从薄弱处切入。',delay:3}),
+    seaBattle('铃港突围',[
+      'r25a . b22 . gold20',
+      '. . . n9 .',
+      'p44 . @n37f . r15',
+      '. p38 . . n11a',
+    ],{tip:'合并两路舰队突破中线。空港在侧翼，可以先抢来牵制敌军。',delay:12}),
+    seaBattle('大风渡口',[
+      'b22a . . r25f .',
+      '. . n11 . b18',
+      'p42 . . gold21 .',
+      '. p37a . . p32',
+    ],{tip:'金方挡着右侧岛，先从它和朱方之间打出一条航路。',delay:6}),
+    seaBattle('三潮汇合',[
+      'r22 . b24 . gold22a',
+      '. n8 . . r19f',
+      'p42 . . n13 .',
+      '. p37a . p32 .',
+    ],{tip:'拿下弱岛再扩张。战线越宽，越需要留一条增援航路。',delay:3}),
+    originalBattles[7],
+  ]},
+];
+
+const islandCounts=[
+  [6,7,7,8,8,9,10,10],
+  [10,10,11,11,12,12,13,13],
+  [13,13,14,14,15,15,16,16],
+  [16,16,17,17,18,18,19,19],
+  [19,19,20,20,20,21,21,22],
+];
+const sailingPace=[1,.96,.90,.84,.78];
+const shoalNames='鲛背礁 云杉岛 飞鱼屿 浅葵滩 风盆岛 雨燕礁 雁尾屿 白瓷湾 旋涡岛 绿藻岬 月牙礁 降帆岛 平水湾 三叶岛 沙鸥屿 冷泉岛 竹灯岛 东岬岛 苔岩屿 日晷礁 木棉岛 石楠湾 乌篷岛 雪鸥屿'.split(' ');
+const soundingRows=[
+  [[80,72],[171,86],[247,68],[335,98],[427,66],[543,88]],
+  [[71,157],[208,171],[293,153],[385,174],[485,153],[548,197]],
+  [[101,244],[183,225],[269,258],[344,232],[444,256],[525,277]],
+  [[73,340],[169,326],[251,346],[341,329],[428,353],[545,355]],
+  [[95,426],[192,413],[285,438],[389,426],[485,451],[545,448]],
+  [[72,539],[169,522],[247,548],[354,543],[449,533],[541,544]],
+];
+
+function limitStartPositions(nodes,battle){
+  const {chapter,index,original}=battle;
+  const training=original===1||original===2;
+  const mustKeep=new Set([battle.neutralReserve,battle.opening?.source]);
+  for(let owner=1;owner<=4;owner++){
+    const owned=nodes.flatMap((node,id)=>node[3]===owner?[id]:[]).sort((a,b)=>nodes[b][4]-nodes[a][4]);
+    if(!owned.length)continue;
+    mustKeep.add(owned[0]);
+    if(owner===1&&owned.length>1&&(training||chapter>=1||index===7)){
+      mustKeep.add(owned.find(id=>nodes[id][5]!==nodes[owned[0]][5])??owned[1]);
+    }
+    if(owner>1){
+      const count=opponentPortCount(battle,owned.length);
+      for(const id of owned.slice(1,count))mustKeep.add(id);
+    }
+  }
+  return nodes.map((node,id)=>{
+    if(node[3]===0||mustKeep.has(id))return node;
+    const neutral=node.slice();
+    neutral[3]=0;
+    neutral[4]=Math.max(7,Math.floor(node[4]*.52));
+    return neutral;
+  });
+}
+
+function opponentPortCount(level,authored){
+  if(level.chapter===0)return level.index===6?2:1;
+  if(level.chapter===1)return level.index>=6?Math.min(2,authored):1;
+  if(level.chapter===2)return level.index%3===1?2:1;
+  if(level.chapter===3)return level.index===2?3:2;
+  return 2;
+}
+
+function balanceOpening(level,nodes){
+  const own=nodes.filter(node=>node[3]===1);
+  const sides=[...new Set(nodes.filter(node=>node[3]>1).map(node=>node[3]))];
+  const neutralReserve=level.neutralReserve;
+  const playerBudget=[[20,30,28,23,26,26,28,30],[30,30,32,32,32,34,34,34],
+    [34,36,36,38,38,38,40,40],[38,40,40,42,42,42,44,44],[42,42,44,44,44,46,46,46]][level.chapter][level.index];
+  const home=own.reduce((main,node)=>node[4]>main[4]?node:main);
+  if(own.length===1)home[4]=playerBudget;
+  else {
+    home[4]=Math.ceil(playerBudget*.59);
+    own.find(node=>node!==home)[4]=playerBudget-home[4];
+    if(level.chapter>=2){
+      home[8]='large';
+      own.find(node=>node!==home)[8]='small';
+    }
+  }
+
+  const distance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  const nearestNeutral=nodes
+    .filter((node,id)=>node[3]===0&&id!==neutralReserve)
+    .reduce((nearest,node)=>distance(home,node)<distance(home,nearest)?node:nearest);
+  nearestNeutral[4]=Math.min(nearestNeutral[4],Math.max(3,Math.floor(home[4]/2)-2));
+  const openingSalvo=own.reduce((sum,node)=>sum+Math.floor(node[4]/2),0);
+  const singleRatio=[1,1.05,1.10,1.16,1.19][level.chapter];
+  const rivalRatio=sides.length===1?singleRatio:(sides.length===2?.70:.66)+level.chapter*.026;
+
+  for(const side of sides){
+    const ports=nodes.filter(node=>node[3]===side);
+    const capital=ports.reduce((main,node)=>node[4]>main[4]?node:main);
+    const need=opponentPortCount(level,ports.length);
+    const candidates=nodes.filter((node,id)=>node[3]===0&&node!==nearestNeutral&&id!==neutralReserve)
+      .sort((a,b)=>distance(capital,a)-distance(capital,b));
+    for(const outpost of candidates.slice(0,Math.max(0,need-ports.length))){
+      outpost[3]=side;
+      ports.push(outpost);
+    }
+    const budget=Math.round(playerBudget*rivalRatio);
+    capital[4]=Math.max(openingSalvo+1,Math.round(budget*(ports.length===1?1:.71)));
+    const outposts=ports.filter(node=>node!==capital);
+    if(outposts.length){
+      const reserves=Math.max(outposts.length*5,budget-capital[4]);
+      const share=Math.floor(reserves/outposts.length);
+      outposts.forEach((node,index)=>{node[4]=share+(index<reserves%outposts.length?1:0);});
+    }
+  }
+  if(neutralReserve!==undefined&&nodes[neutralReserve][3]===0){
+    nodes[neutralReserve][4]=Math.max(openingSalvo,Math.min(nodes[neutralReserve][4],openingSalvo+5));
+  }
+}
+
+function varyStartingTroops(level,nodes,random){
+  const groups=[1,2,3,4].map(side=>nodes.filter(node=>node.owner===side).sort((a,b)=>b.units-a.units));
+  const [player,...enemies]=groups.filter(ports=>ports.length);
+  const total=ports=>ports.reduce((sum,node)=>sum+node.units,0);
+  const integer=(low,high)=>low+Math.floor(random()*(high-low+1));
+  const spread=level.chapter<2?2:3;
+  const playerBudget=total(player)+integer(-spread,spread);
+  distributeStartingTroops(player,playerBudget);
+  const firstWave=player.reduce((sum,node)=>sum+Math.floor(node.units/2),0);
+
+  if(enemies.length===1){
+    const [enemy]=enemies;
+    const localSize={small:0,medium:1,large:2};
+    const sizeDifference=localSize[enemy[0].size]-localSize[player[0].size];
+    const roll=random();
+    const favorEnemy=.72+sizeDifference*.035;
+    const lead=integer(1,level.chapter<2?3:5);
+    const budget=playerBudget+(roll<favorEnemy?lead:roll<favorEnemy+.17?0:-lead);
+    distributeStartingTroops(enemy,budget,firstWave+1);
+  }else{
+    const perFactionLimit=Math.floor(playerBudget*2.5/enemies.length);
+    for(const enemy of enemies){
+      const budget=Math.min(perFactionLimit,total(enemy)+integer(-spread,spread));
+      distributeStartingTroops(enemy,budget,firstWave+1);
+    }
+  }
+}
+
+function distributeStartingTroops(ports,budget,minimum=0){
+  const [capital,...outposts]=ports;
+  const guard=4;
+  budget=Math.max(budget,minimum+outposts.length*guard);
+  if(!outposts.length){capital.units=budget;return;}
+  const base=ports.reduce((sum,node)=>sum+node.units,0);
+  capital.units=Math.max(minimum,Math.min(budget-outposts.length*guard,Math.round(budget*capital.units/base)));
+  const reserves=budget-capital.units;
+  const share=Math.floor(reserves/outposts.length);
+  outposts.forEach((node,i)=>{node.units=share+(i<reserves%outposts.length?1:0);});
+}
+
+function varyIslandPositions(level,nodes,seed){
+  let state=(Math.floor(seed*4294967296)>>>0)||0x6d2b79f5;
+  const random=()=>{
+    state^=state<<13;state^=state>>>17;state^=state<<5;
+    return (state>>>0)/4294967296;
+  };
+  const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const home=nodes.find(node=>node.owner===1);
+  const nearby=nodes.filter(node=>node.owner===0).sort((a,b)=>distance(home,a)-distance(home,b))[0];
+  const originalDistance=distance(home,nearby);
+  const minSpacing=73;
+  const mirror=level.chapter>0&&random()<.45;
+  for(const node of nodes){
+    const radius=node.owner===0&&node!==nearby?(level.chapter===0?24:39):level.chapter===0?8:16;
+    for(let attempt=0;attempt<6;attempt++){
+      const angle=random()*Math.PI*2, offset=radius*(.4+.6*random());
+      const candidate={x:Math.round(node.x+Math.cos(angle)*offset),y:Math.round(node.y+Math.sin(angle)*offset)};
+      if(candidate.x<60||candidate.x>WIDTH-60||candidate.y<59||candidate.y>HEIGHT-57)continue;
+      if(nodes.some(other=>other!==node&&distance(candidate,other)<minSpacing))continue;
+      if(node===home&&distance(candidate,nearby)>originalDistance+17)continue;
+      if(node===nearby&&distance(candidate,home)>originalDistance+17)continue;
+      node.x=candidate.x;node.y=candidate.y;
+      break;
+    }
+  }
+  if(mirror)for(const node of nodes)node.x=WIDTH-node.x;
+}
+
+function chartBattle(battle){
+  const {chapter,index,original}=battle;
+  const desired=islandCounts[chapter][index];
+  const seed=chapter*19+index*7;
+  const nodes=limitStartPositions(battle.nodes,battle).map((node,id)=>{
+    const [x,y,name,owner,units,kind,shape,fort=false,size]=node;
+    const tier=size??(fort?'large':owner===0?(units>=15?'large':id%3===0?'medium':'small'):'medium');
+    const north=original===0?y:Math.round(y*1.06)+18;
+    return [x,north,name,owner,units,kind,shape,fort,tier];
+  });
+  const points=soundingRows.flat().map(([x,y],id)=>[
+    x+((id*29+seed*13)%19)-9,
+    y+((id*17+seed*11)%23)-11,
+  ]);
+  const ordered=points.map((point,id)=>points[(id*17+seed)%points.length]);
+  while(nodes.length<desired&&ordered.length){
+    const distances=ordered.map(([x,y])=>Math.min(...nodes.map(node=>Math.hypot(node[0]-x,node[1]-y))));
+    const gap=desired<13?81:74;
+    const preferred=distances.findIndex(d=>d>=gap);
+    const chosen=preferred<0?distances.indexOf(Math.max(...distances)):preferred;
+    const [x,y]=ordered.splice(chosen,1)[0];
+    const id=nodes.length,variant=(seed+id*13)%8;
+    const size=variant<=3?'small':variant<=5?'medium':'large';
+    const kind=chapter>=2&&variant===5?'air':'sea';
+    const name=shoalNames[(id+seed)%shoalNames.length]+(kind==='air'?'机场':'');
+    const baseGuard=size==='large'?(chapter>=2&&variant===7?21:12):size==='medium'?8:5;
+    const units=baseGuard+(seed+id)%4;
+    nodes.push([x,y,name,0,units,kind,(id+seed)%4,false,size]);
+  }
+  balanceOpening(battle,nodes);
+  return {...battle,nodes,pace:sailingPace[chapter]};
+}
+
+function expandBattle(battle,chapter,index){
+  const {rows,tip,delay}=battle;
+  if(!rows)return chartBattle({...battle,chapter,index,original:originalBattles.indexOf(battle)});
+  const sides={p:1,r:2,b:3,gold:4,n:0};
+  const names=harborNames[chapter];
+  const nodes=[];
+  let neutralReserve;
+  rows.forEach((row,y)=>row.split(' ').forEach((cell,x)=>{
+    if(cell==='.')return;
+    const [,mark,side,count,kind]=/^(@?)(p|r|b|gold|n)(\d+)(a|f)?$/.exec(cell);
+    const id=nodes.length;
+    if(mark&&side==='n')neutralReserve=id;
+    const name=names[(id+index)%names.length]+(kind==='a'?'机场':'');
+    const stagger=y%2===0?-7:7;
+    nodes.push([94+x*108+stagger+((index+3*x+chapter*7)%19)-9,
+      100+y*107+((x*11+index*5+chapter*3)%31)-15,name,sides[side],Number(count),kind==='a'?'air':'sea',(x+y+chapter)%4,kind==='f']);
+  }));
+  return chartBattle({name:battle.name,guide:tip,rivalDelay:delay,skill:chapter>0,nodes,chapter,index,neutralReserve});
+}
+
+const levels=chapters.flatMap((chapter,id)=>chapter.battles.map((battle,index)=>expandBattle(battle,id,index)));
+const stageId=level=>`${level.chapter+1}-${level.index+1}`;
+
+
+function dispatchable(s,sourceIds,targetId,owner){
+  return [...new Set(sourceIds)].filter(id=>id!==targetId&&s.nodes[id]?.owner===owner&&s.nodes[id].units>=2);
+}
+function arrivalStrength(node,kind,units){return node.fort&&kind==='air'?Math.floor(units*.6):units;}
+function canUseWind(s,node,owner,boost){
+  return Boolean(node.kind==='sea'&&boost&&owner===1&&!s.windSpent&&levels[s.mission].skill);
+}
+function travelTime(level,from,to,wind=false){
+  const campaign=level.pace!==undefined;
+  const speed=(from.kind==='air'?(campaign?208:192):(campaign?116:124))*(level.pace??1);
+  const minimum=campaign?.85:1.25;
+  return Math.max(minimum,Math.hypot(from.x-to.x,from.y-to.y)/speed)/(wind?1.35:1);
+}
+const productionSize={small:1.13,medium:1,large:.88};
+const islandCapacity={small:30,medium:50,large:80};
+function productionCap(node){return islandCapacity[node.size]??islandCapacity.medium;}
+function productionPeriod(node,owner=node.owner){
+  const base=node.kind==='air'?1.6:owner===1?1.05:1.24;
+  return base*(productionSize[node.size]??1);
+}
+function sendBatch(s,sourceIds,targetId,owner,boost=false){
+  if(s.mode!=='play'||!s.nodes[targetId])return {sent:0,units:0};
+  const target=s.nodes[targetId];
+  let sent=0,units=0,boosted=false;
+  for(const id of dispatchable(s,sourceIds,targetId,owner)){
+    const node=s.nodes[id],amount=Math.floor(node.units/2);
+    const wind=canUseWind(s,node,owner,boost);
+    const duration=travelTime(levels[s.mission],node,target,wind);
+    s.fleets.push({id:s.nextId++,owner,kind:node.kind,units:amount,x:node.x,y:node.y,target:targetId,
+      vx:(target.x-node.x)/duration,vy:(target.y-node.y)/duration,remaining:duration,boosted:wind,elapsed:0});
+    node.units-=amount;sent++;units+=amount;boosted ||= wind;
+  }
+  if(boosted)s.windSpent=true;
+  return {sent,units,boosted};
+}
+function firstContact(a,b,span){
+  if(a.owner===b.owner||a.kind!==b.kind)return null;
+  const x=a.x-b.x,y=a.y-b.y,vx=a.vx-b.vx,vy=a.vy-b.vy;
+  const offset=x*x+y*y-CONTACT*CONTACT;
+  if(offset<=0)return 0;
+  const speed=vx*vx+vy*vy,slope=x*vx+y*vy;
+  if(speed<EPS||slope>=0)return null;
+  const discriminant=slope*slope-speed*offset;
+  if(discriminant<0)return null;
+  const t=(-slope-Math.sqrt(discriminant))/speed;
+  return t>=0&&t<=span?t:null;
+}
+function arrive(s,f,at){
+  const n=s.nodes[f.target];
+  if(n.owner===f.owner){n.units+=f.units;return;}
+  const impact=arrivalStrength(n,f.kind,f.units);
+  if(impact!==f.units)s.effects.push({x:n.x,y:n.y,at,label:'岸防 −'+(f.units-impact),kind:'fort'});
+  if(impact>n.units){
+    n.units=impact-n.units;n.owner=f.owner;n.growth=0;n.pulseUntil=at+.65;
+  }
+  else n.units-=impact;
+}
+function moveFleets(s,dt){
+  const events=[];
+  for(let i=0;i<s.fleets.length;i++){
+    const a=s.fleets[i];
+    if(a.remaining<=dt)events.push({t:a.remaining,a});
+    for(let j=i+1;j<s.fleets.length;j++){
+      const b=s.fleets[j],t=firstContact(a,b,Math.min(dt,a.remaining,b.remaining));
+      if(t!==null)events.push({t,a,b});
+    }
+  }
+  events.sort((p,q)=>p.t-q.t||Number(Boolean(q.b))-Number(Boolean(p.b))||p.a.id-q.a.id||(p.b?.id??0)-(q.b?.id??0));
+  for(const {t,a,b} of events){
+    if(a.units===0||a.arrived)continue;
+    if(!b){arrive(s,a,s.time+t);a.arrived=true;continue;}
+    if(b.units===0||b.arrived)continue;
+    const clash=Math.min(a.units,b.units);
+    a.units-=clash;b.units-=clash;
+    s.effects.push({x:(a.x+b.x+(a.vx+b.vx)*t)/2,y:(a.y+b.y+(a.vy+b.vy)*t)/2,at:s.time+t,label:`−${clash} / −${clash}`,kind:a.kind});
+  }
+  s.fleets=s.fleets.filter(f=>f.units>0&&!f.arrived);
+  for(const f of s.fleets){f.x+=f.vx*dt;f.y+=f.vy*dt;f.remaining-=dt;f.elapsed+=dt;}
+}
+function chooseEnemyMove(s,plan){
+  const side=plan.owner;
+  const reserves=s.nodes.flatMap((n,id)=>n.owner===side&&n.units>=12?[{id,node:n,units:Math.floor(n.units/2)}]:[]);
+  const tactics=s.rivalTactics;
+  const rivalry=tactics&&tactics.mode!=='pincer'&&s.time<52;
+  let best=null;
+  s.nodes.forEach((to,target)=>{
+    if(to.owner===side)return;
+    const friendly=s.fleets.reduce((sum,f)=>sum+(f.target===target&&f.owner===side?arrivalStrength(to,f.kind,f.units):0),0);
+    if(friendly>to.units+4)return;
+    const contested=s.fleets.some(f=>f.target===target&&f.owner!==side);
+    const baseScore=(to.owner===0?plan.neutralBias:plan.raidBias)+(to.kind==='air'?3:0)-(contested?2:0);
+    const candidates=reserves.map(({id,node,units})=>({id,units:arrivalStrength(to,node.kind,units),distance:Math.hypot(node.x-to.x,node.y-to.y)}));
+    const remember=(ids,strength,distance,penalty)=>{
+      const advantage=strength+friendly-to.units;
+      const rivalBonus=rivalry&&to.owner>1&&advantage>0?8:0;
+      const score=baseScore+Math.min(15,advantage)-distance/60-penalty+rivalBonus;
+      if(score>0&&(!best||score>best.score))best={ids,target,score};
+    };
+    candidates.forEach(from=>remember([from.id],from.units,from.distance,0));
+    if(to.owner===0||friendly>0||s.mission<3)return;
+    const nearby=candidates.filter(from=>from.distance<=305).sort((a,b)=>(b.units-b.distance/25)-(a.units-a.distance/25)).slice(0,2);
+    if(nearby.length===2){
+      const [a,b]=nearby;
+      if(Math.max(a.units,b.units)<=to.units&&a.units+b.units>to.units)remember([a.id,b.id],a.units+b.units,Math.max(a.distance,b.distance),8);
+    }
+  });
+  if(best){
+    const targetSide=s.nodes[best.target].owner;
+    const result=sendBatch(s,best.ids,best.target,side);
+    if(result.sent&&targetSide>1&&tactics&&tactics.firstRivalOrder===null)tactics.firstRivalOrder=s.time;
+  }
+}
+
+function tryPincer(s,activeOpponents){
+  const tactics=s.rivalTactics;
+  if(!tactics||s.time<tactics.nextPincer||activeOpponents.length<2)return;
+  if(tactics.mode==='mixed'&&(tactics.firstRivalOrder===null||s.time-tactics.firstRivalOrder<7))return;
+  tactics.nextPincer=s.time+1;
+  const level=levels[s.mission];
+  const player=s.nodes.flatMap((node,id)=>node.owner===1?[{node,id}]:[]);
+  const ready=activeOpponents.filter(plan=>plan.at<=s.time+plan.interval*.82);
+  const orders=ready.flatMap(plan=>s.nodes.flatMap((from,source)=>{
+    if(from.owner!==plan.owner||from.units<14)return [];
+    const units=Math.floor(from.units/2);
+    return player.flatMap(({node:to,id:target})=>{
+      const impact=arrivalStrength(to,from.kind,units);
+      const eta=travelTime(level,from,to);
+      if(eta>5.8||impact<Math.max(7,to.units*.4))return [];
+      return [{plan,source,target,impact,eta}];
+    });
+  }));
+  let best=null;
+  for(let i=0;i<orders.length;i++){
+    const a=orders[i],target=s.nodes[a.target];
+    for(let j=i+1;j<orders.length;j++){
+      const b=orders[j];
+      if(a.plan===b.plan||Math.abs(a.eta-b.eta)>2.5)continue;
+      const sameTarget=a.target===b.target;
+      if(sameTarget&&(a.impact+b.impact<=target.units||!oppositeApproach(s.nodes[a.source],s.nodes[b.source],target)))continue;
+      const score=a.impact+b.impact-(a.eta+b.eta)*2+(sameTarget?0:6);
+      if(!best||score>best.score)best={a,b,score};
+    }
+  }
+  if(!best)return;
+  const firstFleet=s.nextId;
+  for(const order of [best.a,best.b]){
+    sendBatch(s,[order.source],order.target,order.plan.owner);
+    order.plan.at=s.time+order.plan.interval;
+  }
+  for(const fleet of s.fleets)if(fleet.id>=firstFleet)fleet.pincer=true;
+  tactics.nextPincer=Infinity;
+}
+
+function oppositeApproach(a,b,to){
+  const ax=a.x-to.x,ay=a.y-to.y,bx=b.x-to.x,by=b.y-to.y;
+  return ax*bx+ay*by<.35*Math.hypot(ax,ay)*Math.hypot(bx,by);
+}
+function step(s,dt){
+  if(s.mode!=='play')return;
+  const level=levels[s.mission];
+  for(const n of s.nodes){
+    if(n.owner===0||n.units>=productionCap(n)){n.growth=0;continue;}
+    n.growth+=dt;
+    const period=productionPeriod(n);
+    if(n.growth>=period){n.units++;n.growth-=period;}
+  }
+  moveFleets(s,dt);s.time+=dt;
+  s.effects=s.effects.filter(e=>s.time-e.at<1.1);
+  const alive=new Set([...s.nodes.map(n=>n.owner),...s.fleets.map(f=>f.owner)]);
+  const activeOpponents=s.enemies.filter(plan=>alive.has(plan.owner));
+  const conquered=!s.nodes.some(node=>node.owner>1);
+  if(!alive.has(1)||conquered){
+    s.winner=Number(alive.has(1)&&conquered);
+    s.mode='end';
+    return;
+  }
+  if(level.opening&&!s.openingSent&&s.time>=level.opening.at){
+    const {side,source,target}=level.opening;sendBatch(s,[source],target,side);s.openingSent=true;
+  }
+  tryPincer(s,activeOpponents);
+  for(const plan of activeOpponents)if(s.time>=plan.at){chooseEnemyMove(s,plan);plan.at=s.time+plan.interval;}
+}
+
+
+const $=id=>document.getElementById(id), board=$('board'), canvas=$('map'), ctx=canvas.getContext('2d');
+const base=document.createElement('canvas');base.width=canvas.width;base.height=canvas.height;
+const terrain=base.getContext('2d');terrain.scale(2,2);ctx.scale(2,2);
+const saveKey='ocean-conquest-tidal-routes-v1';
+const legacySaveKey='ocean-conquest-campaign-v1';
+const skins=[
+  {id:'patrol',name:'巡岛艇',unlock:'初始外观',earned:()=>true},
+  {id:'sail',name:'白帆快艇',unlock:'通关白帆海湾',earned:()=>chapterCleared(0)},
+  {id:'copper',name:'赤铜巡洋',unlock:'通关赤岩外海',earned:()=>chapterCleared(3)},
+  {id:'lantern',name:'长明灯舰',unlock:'通关 12 场',earned:()=>completedBattles()>=12},
+];
+const sizeNames={small:'小岛',medium:'中岛',large:'大岛'};
+function readProfile(){
+  const valid=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
+  try{
+    const record=JSON.parse(localStorage.getItem(saveKey)||'null');
+    const legacy=record?[]:JSON.parse(localStorage.getItem(legacySaveKey)||'[]');
+    return {best:levels.map(level=>valid(record?.best?.[stageId(level)]??legacy?.[level.original])),skin:record?.skin};
+  }catch{}
+  return {best:Array(levels.length).fill(null)};
+}
+const profile=readProfile(),best=profile.best;
+const unlocked=()=>{
+  const first=best.indexOf(null);
+  return first===-1?levels.length-1:first;
+};
+const chapterCleared=chapter=>levels.every((level,i)=>level.chapter!==chapter||best[i]!==null);
+const completedBattles=()=>best.filter(time=>time!==null).length;
+let skin=skins.find(option=>option.id===profile.skin&&option.earned())?.id??skins[0].id;
+let state,selected=new Set(),wind=false,gesture=null,suppressClick=false;
+let last=performance.now(),lag=0,dirty=true,lastUi=0;
+let infoUntil=0;
+function save(){
+  const record=Object.fromEntries(levels.flatMap((level,i)=>best[i]===null?[]:[[stageId(level),best[i]]]));
+  try{localStorage.setItem(saveKey,JSON.stringify({best:record,skin}));}catch{}
+}
+function writeText(el,text){if(el.textContent!==text)el.textContent=text;}
+function tell(msg){writeText($('status'),msg);}
+function setMode(i){
+  state=newBattle(i);selected.clear();wind=false;gesture=null;lag=0;last=performance.now();dirty=true;suppressClick=false;infoUntil=0;
+  const level=levels[i];
+  state.skin=skin;
+  state.chartColor=chapters[level.chapter].theme;
+  writeText($('progress'),`第 ${i+1} / ${levels.length} 场`);
+  document.body.style.backgroundColor=state.chartColor;
+  $('end').hidden=true;
+  $('islands').replaceChildren(...state.nodes.map((n,id)=>{
+    const button=document.createElement('button');button.className='island';button.type='button';button.dataset.id=id;
+    button.style.left=n.x/WIDTH*100+'%';button.style.top=n.y/HEIGHT*100+'%';
+    const value=document.createElement('span');value.className='number';value.dataset.size=n.size;
+    const name=document.createElement('small');name.textContent=n.name;
+    button.append(value,name);button.addEventListener('click',e=>{if(e.detail===0||!suppressClick)pick(id);});return button;
+  }));
+  $('territoryBar').replaceChildren(...[1,...state.enemies.map(e=>e.owner),0].map(side=>{
+    const segment=document.createElement('span');
+    segment.dataset.owner=side;
+    segment.style.setProperty('--side',side===0?'#b5aa93':palette[side]);
+    return segment;
+  }));
+  tell('青色是你的阵营。');refreshProjection();sync();
+}
+function refreshProjection(){
+  const rect=canvas.getBoundingClientRect();
+  state.viewAspect=rect.width/rect.height||1;
+  paintMap();
+  dirty=true;
+}
+new ResizeObserver(()=>{if(state)refreshProjection();}).observe(board);
+function pendingCount(ids,target=null){return dispatchable(state,ids,target,1).reduce((n,id)=>n+Math.floor(state.nodes[id].units/2),0);}
+function updateGestureLabel(){
+  const bar=$('gestureHint');
+  if(!gesture?.drag||gesture.id===null){bar.hidden=true;return;}
+  const target=hitAt(gesture.to),sources=dispatchable(state,gesture.sources,target,1);
+  let hint=`已串联 ${gesture.sources.size} 岛`;
+  if(target!==null&&sources.length){
+    const n=state.nodes[target],count=pendingCount(sources,target);
+    const arrivals=sources.map(id=>{
+      const origin=state.nodes[id];
+      return travelTime(levels[state.mission],origin,n,canUseWind(state,origin,1,wind));
+    });
+    const earliest=Math.min(...arrivals).toFixed(1),latest=Math.max(...arrivals).toFixed(1);
+    const eta=(earliest===latest?earliest:earliest+'–'+latest)+' 秒';
+    const impact=n.owner===1?count:sources.reduce((sum,source)=>{
+      const origin=state.nodes[source];return sum+arrivalStrength(n,origin.kind,Math.floor(origin.units/2));
+    },0);
+    hint=`${sources.length} 路 · ${impact<count?'攻岸 '+impact:count} 兵 · ${eta}`;
+  }
+  writeText(bar,hint);bar.hidden=false;
+}
+function sync(){
+  for(const id of selected)if(state.nodes[id].owner!==1)selected.delete(id);
+  const playing=state.mode!=='end',level=levels[state.mission];
+  const showingInfo=playing&&performance.now()<infoUntil;
+  $('islandInfo').hidden=!showingInfo;
+  $('tip').hidden=showingInfo||!(state.mission===0&&state.mode==='play'&&state.time<7&&state.nextId===1);
+  writeText($('tip'),'从青岛滑向中立岛');
+  $('skill').hidden=!level.skill||!playing;
+  $('skill').disabled=state.windSpent;
+  writeText($('skill'),state.windSpent?'顺风令已用':wind?'顺风令待发':'顺风令');
+  $('skill').setAttribute('aria-pressed',String(wind));
+  const totals=[0,0,0,0,0];
+  for(const node of state.nodes)totals[node.owner]++;
+  for(const segment of $('territoryBar').children){
+    const total=totals[Number(segment.dataset.owner)];
+    segment.hidden=total===0;
+    segment.style.flexGrow=total;
+  }
+  state.nodes.forEach((n,id)=>{
+    const el=$('islands').children[id];
+    if(el.dataset.side!==String(n.owner)){el.dataset.side=n.owner;el.style.setProperty('--badge',palette[n.owner]);}
+    writeText(el.firstElementChild,String(n.units));
+    el.setAttribute('aria-pressed',String(Boolean(selected.has(id)||gesture?.sources?.has(id)&&n.owner===1)));
+    const label=`${factions[n.owner]} ${n.name}，${n.units} 兵，${islandDescription(n)}`;
+    if(el.getAttribute('aria-label')!==label){
+      el.setAttribute('aria-label',label);
+      el.title=label;
+    }
+    if(el.disabled===playing)el.disabled=!playing;
+  });
+  updateGestureLabel();
+}
+function finishBattle(){
+  const i=state.mission,won=state.winner===1;
+  const level=levels[i];
+  const previousSkins=skins.filter(option=>option.earned()).map(option=>option.id);
+  gesture=null;selected.clear();wind=false;
+  if(won){
+    const seconds=Math.max(.01,state.time);
+    best[i]=best[i]===null?seconds:Math.min(best[i],seconds);
+    save();
+  }
+  $('end').hidden=false;
+  const campaignEnd=i===levels.length-1;
+  const newSkin=skins.find(option=>option.earned()&&!previousSkins.includes(option.id));
+  writeText($('resultTitle'),won?(campaignEnd?'航线完成':'夺岛胜利'):'再试一次');
+  writeText($('resultBrief'),won?(newSkin?`解锁 ${newSkin.name}`:'') : level.guide);
+  $('resultBrief').hidden=won&&!newSkin;
+  $('again').hidden=won&&!campaignEnd;
+  $('next').hidden=!won||campaignEnd;
+  tell(won?'本关已通过。':'重新出航，试试先换一条路线。');sync();
+}
+function launch(ids,id){
+  const result=sendBatch(state,ids,id,1,wind);
+  if(!result.sent){tell('选择一座有兵的青岛，再指定其他岛屿。');sync();return;}
+  if(result.boosted)wind=false;
+  selected.clear();infoUntil=0;tell(`${result.sent} 路，共 ${result.units} 兵，驶向${state.nodes[id].name}。`);dirty=true;sync();
+}
+function islandDescription(node){
+  const type=node.fort?'岸防港':node.kind==='air'?'空港':'海军港';
+  const seconds=productionPeriod(node,node.owner||1).toFixed(1);
+  return `${sizeNames[node.size]}${type} · ${node.owner===0?'占领后 ':''}${seconds} 秒产 1 兵 · 自产上限 ${productionCap(node)}`;
+}
+function pick(id){
+  if(state.mode==='end')return;
+  const node=state.nodes[id];
+  if(selected.size&&node.owner!==1){launch(selected,id);return;}
+  writeText($('islandInfo'),islandDescription(node));
+  infoUntil=performance.now()+3400;
+  if(node.owner!==1){tell(`${node.name} · ${islandDescription(node)}`);sync();return;}
+  if(selected.has(id))selected.delete(id);else selected.add(id);
+  tell(selected.size===1&&selected.has(id)?`${node.name} · ${islandDescription(node)}`:
+    selected.size?'点目标出航，或继续点青岛加入。':'已清空选择。');dirty=true;sync();
+}
+function locate(e){const b=canvas.getBoundingClientRect();return {x:(e.clientX-b.left)*WIDTH/b.width,y:(e.clientY-b.top)*HEIGHT/b.height};}
+function hitAt(at){
+  let closest=null,radius=42;
+  state.nodes.forEach((n,id)=>{const d=Math.hypot(n.x-at.x,n.y-at.y);if(d<radius){radius=d;closest=id;}});return closest;
+}
+function collectBetween(g,a,b){
+  const dx=b.x-a.x,dy=b.y-a.y,len=dx*dx+dy*dy,hits=[];
+  state.nodes.forEach((n,id)=>{
+    if(n.owner!==1||g.sources.has(id))return;
+    const t=len?Math.max(0,Math.min(1,((n.x-a.x)*dx+(n.y-a.y)*dy)/len)):0;
+    if(Math.hypot(n.x-a.x-dx*t,n.y-a.y-dy*t)<=Math.max(22,34*islandScale(n)))hits.push({id,t});
+  });
+  hits.sort((a,b)=>a.t-b.t).forEach(({id})=>g.sources.add(id));
+}
+function track(g,to){
+  g.drag ||= Math.hypot(to.x-g.from.x,to.y-g.from.y)>10;
+  if(g.drag&&g.id!==null)collectBetween(g,g.to,to);
+  g.to=to;
+}
+board.addEventListener('pointerdown',e=>{
+  if(state.mode==='end'||gesture||e.button!==0||e.target.closest('.panel,.hud'))return;
+  suppressClick=false;
+  const hit=e.target.closest('.island'),at=locate(e),id=hit?Number(hit.dataset.id):hitAt(at);
+  if(id!==null&&state.nodes[id].owner!==1)return;
+  const sources=id===null?new Set():selected.has(id)?new Set(selected):new Set([id]);
+  gesture={pointer:e.pointerId,id,from:at,to:at,drag:false,sources};(hit||board).setPointerCapture(e.pointerId);
+});
+board.addEventListener('pointermove',e=>{
+  if(gesture?.pointer!==e.pointerId)return;
+  const rect=canvas.getBoundingClientRect();
+  for(const sample of [...e.getCoalescedEvents?.()||[],e]){
+    track(gesture,{x:(sample.clientX-rect.left)*WIDTH/rect.width,y:(sample.clientY-rect.top)*HEIGHT/rect.height});
+  }
+  dirty=true;updateGestureLabel();
+});
+function finishGesture(e,abort){
+  if(gesture?.pointer!==e.pointerId)return;
+  const g=gesture;
+  if(!abort)track(g,locate(e));
+  gesture=null;dirty=true;updateGestureLabel();
+  if(abort||!g.drag)return;
+  suppressClick=true;
+  const at=g.to;
+  if(g.id!==null){
+    const id=hitAt(at);
+    if(id!==null)launch(g.sources,id);else {tell('已取消。滑到岛上再松手。');sync();}
+  }else{
+    const inside=n=>n.x>=Math.min(at.x,g.from.x)&&n.x<=Math.max(at.x,g.from.x)&&n.y>=Math.min(at.y,g.from.y)&&n.y<=Math.max(at.y,g.from.y);
+    selected=new Set(state.nodes.flatMap((n,id)=>n.owner===1&&inside(n)?[id]:[]));
+    tell(selected.size?'已框选，点目标派兵。':'框内没有青方岛屿。');sync();
+  }
+}
+board.addEventListener('pointerup',e=>finishGesture(e,false));
+board.addEventListener('pointercancel',e=>finishGesture(e,true));
+board.addEventListener('lostpointercapture',e=>finishGesture(e,true));
+$('openMenu').onclick=()=>{
+  gesture=null;
+  dirty=true;
+  sync();
+  $('menuDialog').showModal();
+};
+$('skill').onclick=()=>{
+  if(state.mode==='end'||state.windSpent)return;
+  wind=!wind;
+  tell(wind?'下次派出的舰船将加速 35%。':'未使用顺风令。');
+  $('menuDialog').close();
+  sync();
+};
+$('restart').onclick=()=>{$('menuDialog').close();setMode(state.mission);};
+$('again').onclick=()=>setMode(state.mission);
+$('next').onclick=()=>{if(state.mode==='end'&&state.winner===1&&state.mission+1<levels.length)setMode(state.mission+1);};
+function showDock(){
+  writeText($('dockProgress'),`已通关 ${completedBattles()} / ${levels.length} 场`);
+  $('dockGrid').replaceChildren(...skins.map(option=>{
+    const button=document.createElement('button');
+    button.type='button';
+    button.disabled=!option.earned();
+    button.setAttribute('aria-pressed',String(option.id===skin));
+    const preview=document.createElement('canvas');
+    preview.width=210;preview.height=64;
+    preview.setAttribute('aria-hidden','true');
+    const sample=preview.getContext('2d');
+    sample.translate(114,32);sample.scale(3,3);
+    ship(sample,1,true,option.id);
+    const name=document.createElement('strong');name.textContent=option.name;
+    const info=document.createElement('small');
+    info.textContent=option.id===skin?'已装备':button.disabled?option.unlock:'装备';
+    button.append(preview,name,info);
+    button.onclick=()=>{
+      skin=option.id;
+      state.skin=skin;
+      save();dirty=true;showDock();
+      $('dockGrid').querySelector('[aria-pressed="true"]').focus();
+    };
+    return button;
+  }));
+}
+$('openDock').onclick=()=>{
+  $('menuDialog').close();
+  showDock();
+  $('dock').showModal();
+};
+document.addEventListener('visibilitychange',()=>{
+  gesture=null;last=performance.now();lag=0;dirty=true;
+});
+function frame(now){
+  const seconds=Math.max(0,Math.min((now-last)/1000,.1));last=now;
+  if(state.mode==='play'&&!document.hidden&&!$('menuDialog').open&&!$('dock').open){
+    lag+=seconds;
+    while(lag>=STEP&&state.mode==='play'){step(state,STEP);lag-=STEP;}
+    dirty=true;
+    if(state.mode==='end')finishBattle();
+    else if(now-lastUi>100){lastUi=now;sync();}
+  }
+  if(dirty){draw();dirty=false;}
+  requestAnimationFrame(frame);
+}
+
+
+const shapes=[
+  [[-44,-3],[-39,-14],[-27,-19],[-24,-28],[-6,-32],[9,-25],[23,-23],[31,-14],[43,-8],[38,4],[26,9],[24,20],[11,24],[-5,20],[-21,24],[-31,15],[-43,12]],
+  [[-40,1],[-33,-13],[-17,-22],[-3,-28],[13,-25],[31,-14],[42,-3],[29,-1],[19,6],[26,17],[13,21],[-6,17],[-22,21],[-37,12]],
+  [[-39,-7],[-26,-18],[-21,-26],[-6,-23],[7,-31],[22,-23],[39,-12],[36,-2],[24,9],[29,22],[12,26],[-6,22],[-18,29],[-32,19],[-45,9]],
+  [[-46,-2],[-33,-14],[-16,-16],[-7,-25],[8,-25],[25,-19],[43,-8],[47,4],[30,11],[18,9],[3,23],[-13,18],[-23,11],[-39,13]],
+];
+function fillPath(c,points,color,outline=null){
+  c.beginPath();points.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();
+  if(color){c.fillStyle=color;c.fill();}
+  if(outline){c.strokeStyle=outline;c.stroke();}
+}
+function coast(c,shape,scale,offsetX,offsetY,fill,stroke=null){
+  fillPath(c,shape.map(([x,y])=>[x*scale+offsetX,y*scale+offsetY]),fill,stroke);
+}
+function trace(c,x,y,xx,yy,color,width=1){
+  c.strokeStyle=color;c.lineWidth=width;c.beginPath();c.moveTo(x,y);c.lineTo(xx,yy);c.stroke();
+}
+function ellipse(c,x,y,xr,yr,fill,stroke=null){
+  c.beginPath();c.ellipse(x,y,xr,yr,0,0,Math.PI*2);
+  if(fill){c.fillStyle=fill;c.fill();}
+  if(stroke){c.strokeStyle=stroke;c.stroke();}
+}
+const islandSizes={small:.64,medium:.88,large:1.12};
+function islandScale(n){
+  const density=state.nodes.length>=15?.83:1;
+  return (islandSizes[n.size]??1)*density;
+}
+function paintIsland(c,n){
+  const scale=islandScale(n);
+  c.save();c.translate(n.x,n.y);c.scale(scale,scale*(state.viewAspect??1));c.lineJoin='round';
+  const shape=shapes[n.shape];
+  c.lineWidth=.8;coast(c,shape,1.28,0,2,null,'#527e8069');
+  coast(c,shape,1.17,1,2,'#c7d5b0','#557e7c88');
+  c.lineWidth=1.3;coast(c,shape,1,0,0,'#e5d4a7','#344a44');
+  c.lineWidth=.8;coast(c,shape,.78,-1,-2,'#a0a57d','#637455');
+  coast(c,shape,.59,-3,-7,'#b6b894','#738160');
+  for(let j=0;j<shape.length;j+=2){
+    const [x,y]=shape[j];trace(c,x*.84,y*.84,x*.98,y*.98,'#655f4c88',.8);
+  }
+  if(n.kind==='air'){
+    c.save();c.rotate(n.shape%2?-.55:.28);c.fillStyle='#4d5b59';c.fillRect(-31,-7,62,14);
+    c.strokeStyle='#e5dcc3';c.lineWidth=1;c.strokeRect(-28,-5,56,10);
+    for(let j=-22;j<=21;j+=9)trace(c,j,0,j+4,0,'#f5e6bf',1);
+    c.fillStyle='#d0bf90';c.fillRect(14,-14,12,6);c.strokeStyle='#455749';c.strokeRect(14,-14,12,6);c.restore();
+  }else{
+    const sign=n.shape%2?-1:1;c.scale(sign,1);
+    c.fillStyle='#725e48';c.fillRect(19,10,7,20);c.fillRect(14,25,19,6);
+    c.fillStyle='#ac9371';for(let j=0;j<4;j++)c.fillRect(20,11+j*5,5,2);c.fillRect(15,26,17,3);
+    for(const [x,y] of [[-22,-9],[-13,-19],[21,-13]]){
+      fillPath(c,[[x-4,y+3],[x,y-5],[x+4,y+3]],'#6d805f','#4d6456');trace(c,x,y+3,x,y+7,'#695742');
+    }
+    if(n.fort){
+      const x=-22,y=13;c.fillStyle='#e9d3b2';c.fillRect(x-6,y-3,13,10);c.strokeStyle='#684938';c.strokeRect(x-6,y-3,13,10);
+      for(let j=-5;j<=5;j+=5)c.fillRect(x+j,y-6,2,4);
+      trace(c,x+2,y-1,x+5,y-9,'#684938',2);
+    }
+  }
+  c.restore();
+}
+function paintMap(){
+  const c=terrain;
+  c.fillStyle=state.chartColor??'#b8cacc';c.fillRect(0,0,WIDTH,HEIGHT);
+  for(let n=0;n<1500;n++){
+    const x=(n*97.313+n*n*.011)%WIDTH,y=(n*57.609+n*n*.022)%HEIGHT;
+    c.fillStyle=n%3?'#31585815':'#f8f3d63b';c.fillRect(x,y,n%11===0?2:1,n%11===0?1.2:.7);
+  }
+  for(let x=26;x<WIDTH;x+=45)trace(c,x,10,x,HEIGHT-10,'#3a646b2e',.6);
+  for(let y=26;y<HEIGHT;y+=45)trace(c,10,y,WIDTH-10,y,'#3a646b2e',.6);
+  c.strokeStyle='#4f6d72a3';c.lineWidth=1;c.strokeRect(11,11,WIDTH-22,HEIGHT-22);
+  c.font='10px Georgia';c.fillStyle='#365d61';c.textAlign='center';
+  const offsets=[48,130,214,296,378,460,542];
+  offsets.forEach((x,i)=>{c.fillText(`${114+i}°`,x,24);trace(c,x,11,x,16,'#4d7074');});
+  const depths=[[75,298,12],[303,83,27],[169,278,18],[409,324,36],[552,72,43],[34,159,21],[353,454,16],[570,450,18],[263,351,25],[425,66,33]];
+  c.fillStyle='#4e757b';for(const [x,y,n] of depths){if(state.nodes.every(a=>Math.hypot(a.x-x,a.y-y)>53))c.fillText(n,x,y);}
+  c.save();c.translate(47,HEIGHT-41);c.scale(1,state.viewAspect??1);c.lineWidth=.8;ellipse(c,0,0,20,20,null,'#3d676a');
+  for(let i=0;i<8;i++){c.save();c.rotate(Math.PI*i/4);trace(c,0,-19,0,-24,'#3d676a');c.restore();}
+  fillPath(c,[[0,-20],[6,6],[0,2],[-6,6]],'#254b51','#254b51');
+  fillPath(c,[[0,18],[5,-5],[0,1],[-5,-5]],'#e8e2c5','#254b51');c.fillStyle='#254b51';c.fillText('N',0,-27);c.restore();
+  c.fillStyle='#345c60';c.font='10px SimSun, serif';c.textAlign='right';c.fillText('水深标记 · 米',601,HEIGHT-24);
+  state.nodes.forEach(n=>paintIsland(c,n));
+}
+function ship(c,side,front,skin='patrol'){
+  const color=palette[side];
+  trace(c,-8,-2.4,-24,-4.4,wakes[side],1.75);trace(c,-8,2.4,-24,4.4,wakes[side],1.75);
+  c.lineWidth=1.15;
+  if(skin==='sail'){
+    fillPath(c,[[-10,-2],[-2,-4],[7,-2],[12,0],[6,3],[-7,3]],color,'#203d42');
+    fillPath(c,[[-5,5],[-1,-8],[5,5]],'#fff1d4','#574c38');
+    trace(c,-1,-8,-1,6,'#674e35',.75);
+    return;
+  }
+  if(skin==='copper'){
+    fillPath(c,[[-12,-3],[-9,-6],[3,-5],[12,0],[3,5],[-9,6],[-12,3]],color,'#203d42');
+    trace(c,-9,-3,5,-2,'#e7b475',1.25);trace(c,-9,3,5,2,'#e7b475',1.25);
+    ellipse(c,-4,0,2.6,2.2,'#eddabd','#584532');
+    ellipse(c,3,0,2,1.8,'#eddabd','#584532');
+    return;
+  }
+  if(skin==='lantern'){
+    fillPath(c,[[-12,-3],[-4,-5],[5,-5],[11,-2],[11,2],[5,5],[-4,5],[-12,3]],color,'#203d42');
+    c.fillStyle='#e4c87d';c.fillRect(-5,-3,6,6);
+    ellipse(c,-2,0,1.7,1.7,'#fff5b6');
+    trace(c,5,-2,8,-2,'#faf1ca',1.4);trace(c,5,2,8,2,'#faf1ca',1.4);
+    return;
+  }
+  fillPath(c,[[-10,-4],[2,-4],[10,0],[2,4],[-10,4]],color,'#203d42');
+  c.fillStyle='#f3e6c8';c.fillRect(-5,-2.5,4.3,5);
+  if(front)trace(c,1,0,5,0,'#efe2bb',1.2);
+}
+function airplane(c,side){
+  trace(c,-10,-1.4,-25,-1.4,'#f4ede2',1.2);
+  c.lineWidth=1.1;fillPath(c,[[-12,0],[-8,-3],[-4,-2],[-6,-8],[-2,-8],[2,-2],[8,-2],[11,0],[8,2],[2,2],[-2,8],[-6,8],[-4,2],[-8,3]],palette[side],'#263e49');
+  trace(c,-6,0,7,0,'#fff1cd',1);
+}
+function aimLine(c,from,to){
+  const dx=to.x-from.x,dy=to.y-from.y,length=Math.hypot(dx,dy);
+  if(length<6)return;
+  const angle=Math.atan2(dy,dx),end=Math.max(3,length-26);
+  c.save();c.translate(from.x,from.y);c.rotate(angle);
+  c.beginPath();c.moveTo(21,0);c.lineTo(end,0);c.stroke();
+  c.setLineDash([]);c.beginPath();c.moveTo(end-7,-4);c.lineTo(end,0);c.lineTo(end-7,4);c.stroke();c.restore();
+}
+function draw(){
+  const c=ctx;c.drawImage(base,0,0,WIDTH,HEIGHT);
+  const aspect=state.viewAspect??1;
+  state.nodes.forEach((n,id)=>{
+    const active=selected.has(id)||gesture?.sources?.has(id)&&n.owner===1;
+    const scale=islandScale(n);
+    c.save();c.translate(n.x,n.y);c.scale(scale,scale*aspect);c.lineWidth=active?2.4:1.15;
+    if(active)coast(c,shapes[n.shape],1.38,0,1,null,'#184e54');
+    c.setLineDash([]);
+    if(n.owner!==0){
+      c.globalAlpha=.22;
+      coast(c,shapes[n.shape],.97,0,0,palette[n.owner]);
+      c.globalAlpha=1;
+    }
+    c.lineWidth=1.1;coast(c,shapes[n.shape],1.13,0,0,null,palette[n.owner]);
+    if(n.pulseUntil>state.time){c.globalAlpha=(n.pulseUntil-state.time)/.65;c.lineWidth=2;ellipse(c,0,0,69-(n.pulseUntil-state.time)*36,50-(n.pulseUntil-state.time)*26,null,palette[n.owner]);c.globalAlpha=1;}
+    c.restore();
+  });
+  for(const fleet of state.fleets){
+    if(!fleet.pincer)continue;
+    const target=state.nodes[fleet.target];
+    c.save();
+    c.globalAlpha=.36;
+    c.setLineDash([4,5]);
+    trace(c,fleet.x,fleet.y,target.x,target.y,palette[fleet.owner],1.45);
+    c.restore();
+  }
+  for(const f of state.fleets){
+    const angle=Math.atan2(f.vy/aspect,f.vx);
+    for(let i=Math.min(3,Math.floor(f.units/6));i>=0;i--){
+      c.save();c.translate(f.x,f.y);c.scale(1,aspect);c.rotate(angle);c.translate(-Math.min(f.elapsed*57,i*10),(i%2?1:-1)*i*4);
+      c.scale(i===0?1:.68,i===0?1:.68);
+      if(f.kind==='air')airplane(c,f.owner);else ship(c,f.owner,i===0,f.owner===1?state.skin:undefined);
+      c.restore();
+    }
+    c.save();c.translate(f.x,f.y);c.scale(1,aspect);
+    c.font='700 14px system-ui';c.textAlign='center';c.lineWidth=3;c.strokeStyle='#faf1da';c.strokeText(f.units,0,-12);
+    c.fillStyle=f.boosted?'#775426':palette[f.owner];c.fillText(f.units,0,-12);c.restore();
+  }
+  for(const effect of state.effects){
+    const age=Math.max(0,state.time-effect.at);
+    c.save();c.translate(effect.x,effect.y);c.scale(1,aspect);c.globalAlpha=1-age/1.1;
+    c.lineWidth=1.4;ellipse(c,0,0,8+age*23,8+age*23,null,'#8b4b37');
+    c.font='bold 15px system-ui';c.textAlign='center';c.fillStyle='#653c31';c.fillText(effect.label,0,-15-age*12);c.restore();
+  }
+  if(gesture?.drag){
+    const {from,to,id}=gesture;c.strokeStyle='#183e44';c.lineWidth=2;c.setLineDash([5,4]);
+    if(id===null){c.fillStyle='#f8f1d56b';c.fillRect(from.x,from.y,to.x-from.x,to.y-from.y);c.strokeRect(from.x,from.y,to.x-from.x,to.y-from.y);}
+    else {
+      const target=hitAt(to),aims=dispatchable(state,gesture.sources,target,1);
+      if(target!==null&&aims.length){
+        const node=state.nodes[target];aims.forEach(source=>aimLine(c,state.nodes[source],node));
+        const scale=islandScale(node);
+        c.save();c.translate(node.x,node.y);c.scale(scale,scale*aspect);c.setLineDash([]);c.lineWidth=2.2;coast(c,shapes[node.shape],1.45,0,0,null,'#1c5057');c.restore();
+      }else{
+        c.beginPath();[...gesture.sources].forEach((source,i)=>{const n=state.nodes[source];if(i)c.lineTo(n.x,n.y);else c.moveTo(n.x,n.y);});
+        c.lineTo(to.x,to.y);c.stroke();
+      }
+    }
+    c.setLineDash([]);
+  }
+}
+
+
+setMode(unlocked());requestAnimationFrame(frame);
+</script>
+</body>
+</html>
