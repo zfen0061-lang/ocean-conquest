@@ -6,11 +6,13 @@ let lag=0;
 let gesture=null;
 let screen='battle';
 let state;
+let battleAudio;
 
 // Cold and warm entries must both be captured before starting the game.
 tt.onShow(options=>{
   launchInfo=options||{};
   inBackground=false;
+  battleAudio?.visibility(true);
   last=0;
   lag=0;
 });
@@ -18,6 +20,7 @@ tt.onHide(()=>{
   gesture=null;
   pressedAction=null;
   inBackground=true;
+  battleAudio?.visibility(false);
   last=0;
   lag=0;
 });
@@ -37,6 +40,19 @@ const terrain=base.getContext('2d');
 const selected=new Set();
 const names=['中立','青方','朱方','蓝方','赭方'];
 const islandSizesText={small:'小岛',medium:'中岛',large:'大岛'};
+battleAudio=createCampaignAudio((name,volume,loop)=>{
+  if(typeof tt.createInnerAudioContext!=='function')return null;
+  const audio=tt.createInnerAudioContext();
+  audio.src=`audio/${name}.wav`;
+  audio.volume=volume;
+  audio.loop=loop;
+  let played=false;
+  return {
+    play(restart){if(restart&&played)audio.stop();audio.play();played=true;},
+    pause(){audio.pause();},
+  };
+},()=>tt.getStorageSync(audioSettingsKey),settings=>tt.setStorageSync(audioSettingsKey,settings));
+battleAudio.visibility(!inBackground);
 
 let profile={best:{},skin:'patrol'};
 try{
@@ -49,11 +65,11 @@ const firstOpen=()=>{
   return i===-1?levels.length-1:i;
 };
 const cleared=()=>levels.filter((_,i)=>record(i)>0).length;
-const clearedChapter=chapter=>levels.every((level,i)=>level.chapter!==chapter||record(i)>0);
+const legacyChapterCleared=chapter=>originalLevels.every((level,i)=>level.chapter!==chapter||record(i)>0);
 const skins=[
   ['patrol','巡岛艇',()=>true,'初始外观'],
-  ['sail','白帆快艇',()=>clearedChapter(0),'通关白帆海湾'],
-  ['copper','赤铜巡洋',()=>clearedChapter(3),'通关赤岩外海'],
+  ['sail','白帆快艇',()=>legacyChapterCleared(0),'通关第 1–8 场'],
+  ['copper','赤铜巡洋',()=>legacyChapterCleared(3),'通关第 25–32 场'],
   ['lantern','长明灯舰',()=>cleared()>=12,'通关 12 场'],
 ];
 
@@ -74,7 +90,7 @@ function storeProgress(){
 }
 function openStage(mission){
   state=newBattle(mission);
-  state.chartColor=chapters[levels[mission].chapter].theme;
+  state.chartColor=seaRoutes[levels[mission].route].theme;
   state.viewAspect=width/height;
   state.skin=skins.some(([id, ,earned])=>id===profile.skin&&earned())?profile.skin:'patrol';
   selected.clear();
@@ -146,7 +162,7 @@ function paintHud(){
     ctx.fillRect(offset,top+14,length,6);
     offset+=length;
   }
-  around(`第 ${state.mission+1} / ${levels.length} 场`,width/2,top+37);
+  around(progressText(state.mission),width/2,top+37);
   button('menu','菜单',menuX,top,44,36,()=>{gesture=null;screen='menu';});
   if(supportsSidebar){
     const left=Math.max(8,(safe.left||0)+6);
@@ -188,7 +204,9 @@ function modal(title,rows,body=[]){
 function drawMenu(){
   const close=['back','返回',()=>{screen=state.mode==='end'?'result':'battle';}];
   if(screen==='menu'){
-    const rows=[close,['restart','重开',()=>openStage(state.mission)],['dock','舰队外观',()=>{screen='dock';}]];
+    const rows=[close,['restart','重开',()=>openStage(state.mission)],['dock','舰队外观',()=>{screen='dock';}],
+      ['music',`音乐：${battleAudio.settings.music?'开':'关'}`,()=>battleAudio.toggle('music')],
+      ['effects',`音效：${battleAudio.settings.effects?'开':'关'}`,()=>battleAudio.toggle('effects')]];
     if(levels[state.mission].skill&&state.mode==='play'&&!state.windSpent){
       rows.push(['wind',wind?'取消顺风令':'启用顺风令',()=>{wind=!wind;screen='battle';}]);
     }
@@ -208,8 +226,10 @@ function drawMenu(){
     modal('从侧边栏继续玩',rows,returned?['已从侧边栏进入游戏']:['抖音首页 → 侧边栏 → 海岛战争']);
   }else if(screen==='result'){
     const win=state.winner===1,next=state.mission+1;
+    const nextRoute=levels[next]?.route;
+    const continueLabel=next<levels.length&&nextRoute!==levels[state.mission].route?`前往${seaRoutes[nextRoute].name}`:'继续';
     const rows=win&&next<levels.length?
-      [['next','继续',()=>openStage(next),true]]:
+      [['next',continueLabel,()=>openStage(next),true]]:
       [['again','再打一局',()=>openStage(state.mission),true],['menu','菜单',()=>{screen='menu';}]];
     modal(win?(next===levels.length?'航线完成':'夺岛胜利'):'再试一次',rows,
       newlyUnlocked?[`解锁 ${newlyUnlocked}`]:[]);
@@ -232,19 +252,24 @@ function hitButton(touch){
 function launch(sources,target){
   const result=sendBatch(state,sources,target,1,wind);
   if(result.sent){
+    battleAudio.departure();
     selected.clear();
     if(result.boosted)wind=false;
   }
 }
 function moveGesture(to){
   const from=gesture.to,dx=to.x-from.x,dy=to.y-from.y,length=dx*dx+dy*dy;
+  const wasDragging=gesture.drag;
   gesture.drag ||= Math.hypot(to.x-gesture.from.x,to.y-gesture.from.y)>10;
   if(gesture.drag&&gesture.id!==null){
+    if(!wasDragging&&!selected.has(gesture.id))battleAudio.selection(gesture.sources.size);
+    const hits=[];
     for(const [id,node] of state.nodes.entries()){
-      if(node.owner!==1)continue;
+      if(node.owner!==1||gesture.sources.has(id))continue;
       const t=length?Math.min(1,Math.max(0,((node.x-from.x)*dx+(node.y-from.y)*dy)/length)):0;
-      if(Math.hypot(node.x-from.x-t*dx,node.y-from.y-t*dy)<=Math.max(22,34*islandScale(node)))gesture.sources.add(id);
+      if(Math.hypot(node.x-from.x-t*dx,node.y-from.y-t*dy)<=Math.max(22,34*islandScale(node)))hits.push({id,t});
     }
+    hits.sort((a,b)=>a.t-b.t).forEach(({id})=>{gesture.sources.add(id);battleAudio.selection(gesture.sources.size);});
   }
   gesture.to=to;
 }
@@ -252,6 +277,7 @@ tt.onTouchStart(event=>{
   if(gesture||pressedAction)return;
   const touch=event.changedTouches?.[0]??event.touches?.[0];
   if(!touch)return;
+  battleAudio.start();
   const action=hitButton(touch);
   if(action){pressedAction={id:action.id,touch:touch.identifier};return;}
   if(screen!=='battle')return;
@@ -291,6 +317,7 @@ tt.onTouchEnd(event=>{
         if(node.owner===1&&node.x>=Math.min(from.x,to.x)&&node.x<=Math.max(from.x,to.x)&&
           node.y>=Math.min(from.y,to.y)&&node.y<=Math.max(from.y,to.y))selected.add(id);
       });
+      if(selected.size)battleAudio.selection(selected.size);
     }
     return;
   }
@@ -302,7 +329,7 @@ tt.onTouchEnd(event=>{
   if(node.owner!==1&&selected.size){launch(selected,move.id);return;}
   if(node.owner===1){
     if(selected.has(move.id))selected.delete(move.id);
-    else selected.add(move.id);
+    else {selected.add(move.id);battleAudio.selection(selected.size);}
   }
   notify(`${names[node.owner]} ${islandSizesText[node.size]} · ${productionPeriod(node,node.owner||1).toFixed(1)} 秒/兵 · 上限 ${productionCap(node)}`);
 });
@@ -315,7 +342,7 @@ function drawFrame(timestamp){
   last=now;
   if(!inBackground&&screen==='battle'&&state.mode==='play'){
     lag+=delta;
-    while(lag>=STEP&&state.mode==='play'){step(state,STEP);lag-=STEP;}
+    while(lag>=STEP&&state.mode==='play'){step(state,STEP,battleAudio.capture);lag-=STEP;}
     for(const id of selected)if(state.nodes[id].owner!==1)selected.delete(id);
     if(state.mode==='end')finishBattle();
   }

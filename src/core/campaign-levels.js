@@ -41,16 +41,19 @@ function newBattle(i,random=Math.random){
   const nodes=level.nodes.map(([x,y,name,owner,units,kind,shape,fort=false,size='medium'])=>
     ({x,y,name,owner,units,kind,shape,fort,size,growth:0,pulseUntil:0}));
   const factionSet=new Set(nodes.map(node=>node.owner));
-  const enemies=opponents.filter(plan=>factionSet.has(plan.owner)).map(plan=>({...plan,at:plan.first+(level.rivalDelay??0)}));
+  const enemies=opponents.filter(plan=>factionSet.has(plan.owner)).map(plan=>({...plan,
+    interval:plan.interval*(level.rivalTempo??1),at:plan.first+(level.rivalDelay??0)}));
   let rivalTactics=null;
   if(random&&level.chapter!==undefined){
     varyStartingTroops(level,nodes,random);
     varyIslandPositions(level,nodes,random());
-    if(enemies.length>1){
-      const roll=random();
-      const mode=roll<.30?'pincer':roll<.67?'rivalry':'mixed';
-      rivalTactics={mode,firstRivalOrder:null,nextPincer:mode==='pincer'?18:mode==='mixed'?24:Infinity};
-    }
+  }
+  if(enemies.length>1&&(random||level.routeStage)){
+    const roll=random?random():(level.routeStage*43%100)/100;
+    const pincerChance=level.pincerChance??.30;
+    const mode=roll<pincerChance?'pincer':roll<pincerChance+.37?'rivalry':'mixed';
+    const pincerAt=level.pincerAt??18;
+    rivalTactics={mode,firstRivalOrder:null,nextPincer:mode==='pincer'?pincerAt:mode==='mixed'?pincerAt+6:Infinity};
   }
   return {mission:i,nodes,enemies,rivalTactics,
     fleets:[],effects:[],time:0,nextId:1,mode:'play',winner:0,windSpent:false,openingSent:false};

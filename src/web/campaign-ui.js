@@ -3,10 +3,30 @@ const base=document.createElement('canvas');base.width=canvas.width;base.height=
 const terrain=base.getContext('2d');terrain.scale(2,2);ctx.scale(2,2);
 const saveKey='ocean-conquest-tidal-routes-v1';
 const legacySaveKey='ocean-conquest-campaign-v1';
+const battleAudio=createCampaignAudio((name,volume,loop)=>{
+  const audio=new Audio(webAudioClips[name]);
+  audio.volume=volume;
+  audio.loop=loop;
+  return {play(restart){if(restart)audio.currentTime=0;return audio.play();},pause(){audio.pause();}};
+},()=>JSON.parse(localStorage.getItem(audioSettingsKey)||'null'),
+  settings=>localStorage.setItem(audioSettingsKey,JSON.stringify(settings)));
+
+function syncAudioSettings(){
+  for(const [key,label] of [['music','音乐'],['effects','音效']]){
+    const enabled=battleAudio.settings[key];
+    $(key).textContent=`${label}：${enabled?'开':'关'}`;
+    $(key).setAttribute('aria-pressed',String(enabled));
+  }
+}
+for(const key of ['music','effects'])$(key).onclick=()=>{battleAudio.toggle(key);syncAudioSettings();};
+syncAudioSettings();
+document.addEventListener('pointerdown',battleAudio.start,true);
+document.addEventListener('pointerup',battleAudio.start,true);
+document.addEventListener('click',battleAudio.start,true);
 const skins=[
   {id:'patrol',name:'巡岛艇',unlock:'初始外观',earned:()=>true},
-  {id:'sail',name:'白帆快艇',unlock:'通关白帆海湾',earned:()=>chapterCleared(0)},
-  {id:'copper',name:'赤铜巡洋',unlock:'通关赤岩外海',earned:()=>chapterCleared(3)},
+  {id:'sail',name:'白帆快艇',unlock:'通关第 1–8 场',earned:()=>legacyChapterCleared(0)},
+  {id:'copper',name:'赤铜巡洋',unlock:'通关第 25–32 场',earned:()=>legacyChapterCleared(3)},
   {id:'lantern',name:'长明灯舰',unlock:'通关 12 场',earned:()=>completedBattles()>=12},
 ];
 const sizeNames={small:'小岛',medium:'中岛',large:'大岛'};
@@ -24,7 +44,7 @@ const unlocked=()=>{
   const first=best.indexOf(null);
   return first===-1?levels.length-1:first;
 };
-const chapterCleared=chapter=>levels.every((level,i)=>level.chapter!==chapter||best[i]!==null);
+const legacyChapterCleared=chapter=>originalLevels.every((level,i)=>level.chapter!==chapter||best[i]!==null);
 const completedBattles=()=>best.filter(time=>time!==null).length;
 let skin=skins.find(option=>option.id===profile.skin&&option.earned())?.id??skins[0].id;
 let state,selected=new Set(),wind=false,gesture=null,suppressClick=false;
@@ -40,8 +60,8 @@ function setMode(i){
   state=newBattle(i);selected.clear();wind=false;gesture=null;lag=0;last=performance.now();dirty=true;suppressClick=false;infoUntil=0;
   const level=levels[i];
   state.skin=skin;
-  state.chartColor=chapters[level.chapter].theme;
-  writeText($('progress'),`第 ${i+1} / ${levels.length} 场`);
+  state.chartColor=seaRoutes[level.route].theme;
+  writeText($('progress'),progressText(i));
   document.body.style.backgroundColor=state.chartColor;
   $('end').hidden=true;
   $('islands').replaceChildren(...state.nodes.map((n,id)=>{
@@ -131,17 +151,20 @@ function finishBattle(){
   }
   $('end').hidden=false;
   const campaignEnd=i===levels.length-1;
+  const nextRoute=levels[i+1]?.route;
   const newSkin=skins.find(option=>option.earned()&&!previousSkins.includes(option.id));
   writeText($('resultTitle'),won?(campaignEnd?'航线完成':'夺岛胜利'):'再试一次');
   writeText($('resultBrief'),won?(newSkin?`解锁 ${newSkin.name}`:'') : level.guide);
   $('resultBrief').hidden=won&&!newSkin;
   $('again').hidden=won&&!campaignEnd;
   $('next').hidden=!won||campaignEnd;
+  writeText($('next'),!campaignEnd&&nextRoute!==level.route?`前往${seaRoutes[nextRoute].name}`:'继续');
   tell(won?'本关已通过。':'重新出航，试试先换一条路线。');sync();
 }
 function launch(ids,id){
   const result=sendBatch(state,ids,id,1,wind);
   if(!result.sent){tell('选择一座有兵的青岛，再指定其他岛屿。');sync();return;}
+  battleAudio.departure();
   if(result.boosted)wind=false;
   selected.clear();infoUntil=0;tell(`${result.sent} 路，共 ${result.units} 兵，驶向${state.nodes[id].name}。`);dirty=true;sync();
 }
@@ -157,7 +180,8 @@ function pick(id){
   writeText($('islandInfo'),islandDescription(node));
   infoUntil=performance.now()+3400;
   if(node.owner!==1){tell(`${node.name} · ${islandDescription(node)}`);sync();return;}
-  if(selected.has(id))selected.delete(id);else selected.add(id);
+  if(selected.has(id))selected.delete(id);
+  else {selected.add(id);battleAudio.selection(selected.size);}
   tell(selected.size===1&&selected.has(id)?`${node.name} · ${islandDescription(node)}`:
     selected.size?'点目标出航，或继续点青岛加入。':'已清空选择。');dirty=true;sync();
 }
@@ -173,11 +197,15 @@ function collectBetween(g,a,b){
     const t=len?Math.max(0,Math.min(1,((n.x-a.x)*dx+(n.y-a.y)*dy)/len)):0;
     if(Math.hypot(n.x-a.x-dx*t,n.y-a.y-dy*t)<=Math.max(22,34*islandScale(n)))hits.push({id,t});
   });
-  hits.sort((a,b)=>a.t-b.t).forEach(({id})=>g.sources.add(id));
+  hits.sort((a,b)=>a.t-b.t).forEach(({id})=>{g.sources.add(id);battleAudio.selection(g.sources.size);});
 }
 function track(g,to){
+  const wasDragging=g.drag;
   g.drag ||= Math.hypot(to.x-g.from.x,to.y-g.from.y)>10;
-  if(g.drag&&g.id!==null)collectBetween(g,g.to,to);
+  if(g.drag&&g.id!==null){
+    if(!wasDragging&&!selected.has(g.id))battleAudio.selection(g.sources.size);
+    collectBetween(g,g.to,to);
+  }
   g.to=to;
 }
 board.addEventListener('pointerdown',e=>{
@@ -210,6 +238,7 @@ function finishGesture(e,abort){
   }else{
     const inside=n=>n.x>=Math.min(at.x,g.from.x)&&n.x<=Math.max(at.x,g.from.x)&&n.y>=Math.min(at.y,g.from.y)&&n.y<=Math.max(at.y,g.from.y);
     selected=new Set(state.nodes.flatMap((n,id)=>n.owner===1&&inside(n)?[id]:[]));
+    if(selected.size)battleAudio.selection(selected.size);
     tell(selected.size?'已框选，点目标派兵。':'框内没有青方岛屿。');sync();
   }
 }
@@ -265,12 +294,13 @@ $('openDock').onclick=()=>{
 };
 document.addEventListener('visibilitychange',()=>{
   gesture=null;last=performance.now();lag=0;dirty=true;
+  battleAudio.visibility(!document.hidden);
 });
 function frame(now){
   const seconds=Math.max(0,Math.min((now-last)/1000,.1));last=now;
   if(state.mode==='play'&&!document.hidden&&!$('menuDialog').open&&!$('dock').open){
     lag+=seconds;
-    while(lag>=STEP&&state.mode==='play'){step(state,STEP);lag-=STEP;}
+    while(lag>=STEP&&state.mode==='play'){step(state,STEP,battleAudio.capture);lag-=STEP;}
     dirty=true;
     if(state.mode==='end')finishBattle();
     else if(now-lastUi>100){lastUi=now;sync();}

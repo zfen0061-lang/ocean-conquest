@@ -21,10 +21,27 @@ test('every campaign map is beatable under the shared rules',()=>{
     }
     return {name:level.name,count:game.nodes.length,won:game.winner===1};
   })`);
-  assert.equal(reports.length,40);
+  assert.equal(reports.length,200);
   assert.equal(reports[0].count,6);
   assert.equal(reports.at(-1).count,22);
   assert.deepEqual(reports.filter(report=>!report.won),[]);
+});
+
+test('four 50-stage routes preserve the original save IDs and ramp up rival pressure',()=>{
+  const campaign=evaluate(`({
+    routes:seaRoutes.map((route,number)=>[route.name,levels.filter(level=>level.route===number).length]),
+    positions:[0,39,40,49,50,99,100,149,150,199].map(i=>[stageId(levels[i]),levels[i].route]),
+    unique:new Set(levels.map(stageId)).size,
+    lateLevels:[levels[40],levels[100],levels[199]].map(level=>[level.rivalTempo,level.pincerAt,level.pincerChance]),
+    originalIDs:originalLevels.map(stageId),
+    mappedIDs:levels.slice(0,40).map(stageId),
+  })`);
+  assert.deepEqual(campaign.routes,[['太平海域',50],['云岬群岛',50],['赤潮海峡',50],['长明外海',50]]);
+  assert.deepEqual(campaign.positions,[['1-1',0],['5-8',0],['route-41',0],['route-50',0],['route-51',1],['route-100',1],['route-101',2],['route-150',2],['route-151',3],['route-200',3]]);
+  assert.equal(campaign.unique,200);
+  assert.deepEqual(campaign.mappedIDs,campaign.originalIDs);
+  assert.ok(campaign.lateLevels.every(([tempo,at,chance],i,stages)=>i===0||
+    tempo<stages[i-1][0]&&at<stages[i-1][1]&&chance>stages[i-1][2]));
 });
 
 test('random starts vary positions without moving island ownership or overlap',()=>{

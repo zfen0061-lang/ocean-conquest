@@ -10,7 +10,7 @@ function seaBattle(name, rows, options={}){
   return {name,rows, ...options};
 }
 
-const chapters=[
+const originalChapters=[
   {name:'白帆海湾',theme:'#b8cacc',lesson:'集结与拦截', battles:[
     ...originalBattles.slice(0,3),
     seaBattle('铜锚港',[
@@ -443,5 +443,112 @@ function expandBattle(battle,chapter,index){
   return chartBattle({name:battle.name,guide:tip,rivalDelay:delay,skill:chapter>0,nodes,chapter,index,neutralReserve});
 }
 
-const levels=chapters.flatMap((chapter,id)=>chapter.battles.map((battle,index)=>expandBattle(battle,id,index)));
-const stageId=level=>`${level.chapter+1}-${level.index+1}`;
+const seaRoutes=[
+  {name:'太平海域',theme:'#b8cacc'},
+  {name:'云岬群岛',theme:'#aac7c2'},
+  {name:'赤潮海峡',theme:'#c5c2a7'},
+  {name:'长明外海',theme:'#aebdc6'},
+];
+const stagesPerRoute=50;
+const routeFormations=[
+  [[30,31],[5,11],[0,7],[23,22]],
+  [[33,26],[0,7],[5,10],[18,24]],
+  [[24,31],[4,11],[0,7],[29,34]],
+  [[33,32],[2,8],[5,10],[12,19]],
+  [[35,28],[0,6],[3,10],[18,25]],
+  [[30,25],[5,10],[1,8],[29,22]],
+];
+const routeObjectives=[
+  '先用最近的舰队拿下兵少的中立岛，再向中线增援。',
+  '绕开岸防坚固的港口，从侧翼压缩对手的补给线。',
+  '观察敌人的出兵方向，在对手交战时拿下落单的岛。',
+  '用飞机抢占远处的跳板，舰船留在近海截击。',
+  '留一支部队在后方，避免两侧敌人同时逼近。',
+  '让航程较长的舰队先出发，再用附近部队接应。',
+];
+
+function routeBattle(number){
+  const route=Math.floor((number-1)/stagesPerRoute);
+  const local=(number-1)%stagesPerRoute;
+  const boss=local===stagesPerRoute-1;
+  const pressure=(number-41)/159;
+  const seed=number*37;
+  let randomState=(Math.imul(seed,0x9e3779b1)>>>0)||1;
+  const random=()=>{
+    randomState^=randomState<<13;randomState^=randomState>>>17;randomState^=randomState<<5;
+    return (randomState>>>0)/4294967296;
+  };
+  const count=boss?22:Math.min(22,17+route+Math.floor(local/17)+(number%3===0?1:0));
+  const formation=routeFormations[(number+route)%routeFormations.length];
+  const extraRival=route>=2||boss||local>=20&&number%3!==1;
+  const point=id=>{
+    const x=79+(id%6)*92+Math.floor(random()*9)-4;
+    const y=79+Math.floor(id/6)*92+Math.floor(random()*9)-4;
+    const rotate=number%4;
+    if(rotate===1)return [WIDTH-y,x];
+    if(rotate===2)return [WIDTH-x,HEIGHT-y];
+    if(rotate===3)return [y,HEIGHT-x];
+    return [x,y];
+  };
+  const slots=Array.from({length:36},(_,id)=>point(id));
+  const taken=new Set(),nodes=[];
+  function place(id,name,owner,units,kind='sea',fort=false,size='medium'){
+    taken.add(id);
+    nodes.push([...slots[id],name,owner,units,kind,(id+seed)%4,fort,size]);
+  }
+  const playerBudget=52+route*3+(number%4);
+  const [home,flank]=formation[0];
+  const capital=Math.ceil(playerBudget*.55);
+  place(home,'青潮港',1,capital,'sea',false,'large');
+  place(flank,number%4===0?'归帆港':'鸥翼空港',1,playerBudget-capital,number%4===0?'sea':'air',false,'medium');
+
+  for(let faction=1;faction<=(extraRival?3:2);faction++){
+    const [capitalSlot,outpost]=formation[faction];
+    const capitalKind=(number+faction)%3===0?'air':'sea';
+    const budget=Math.round(playerBudget*((extraRival?.61:.70)+pressure*.15+(boss?.06:0)));
+    const capitalUnits=Math.ceil(budget*.65);
+    const fortified=capitalKind==='sea'&&route>0&&(boss||(number+faction)%4===0);
+    const rivalName=['朱岬','苍雾','金帆'][faction-1];
+    place(capitalSlot,`${rivalName}${capitalKind==='air'?'空港':'主港'}`,faction+1,capitalUnits,capitalKind,fortified,fortified?'large':'medium');
+    place(outpost,`${rivalName}前哨`,faction+1,budget-capitalUnits,capitalKind==='sea'&&(number+faction)%2===0?'air':'sea',false,'small');
+  }
+
+  const distance=(a,b)=>Math.hypot(slots[a][0]-slots[b][0],slots[a][1]-slots[b][1]);
+  const openings=Array.from({length:36},(_,id)=>id).filter(id=>!taken.has(id));
+  for(const [index,origin] of [home,flank].entries()){
+    const closest=openings.filter(id=>!taken.has(id)).sort((a,b)=>distance(a,origin)-distance(b,origin))[0];
+    place(closest,index?'归潮岛':'浅风岛',0,5+route+index,'sea',false,index||route>=2?'medium':'small');
+  }
+  // Shuffle only the neutral berths; preserve two nearby openings even on the hardest routes.
+  for(let i=openings.length-1;i>0;i--){
+    const j=Math.floor(random()*(i+1));
+    [openings[i],openings[j]]=[openings[j],openings[i]];
+  }
+  for(const id of openings){
+    if(nodes.length>=count)break;
+    if(taken.has(id))continue;
+    const slot=(id+seed)%9;
+    const coastal=slot===8&&route>=1;
+    const kind=slot===3||slot===6?'air':'sea';
+    const size=coastal||slot>=7?'large':slot>=4?'medium':'small';
+    const guards={small:6,medium:9,large:14}[size]+route*2+Math.floor(random()*5)+(coastal?4:0);
+    const name=shoalNames[(nodes.length+seed)%shoalNames.length];
+    place(id,name+(kind==='air'?'空港':coastal?'岸防港':''),0,guards,kind,coastal,size);
+  }
+  return {
+    name:boss?`${seaRoutes[route].name}会战`:`${seaRoutes[route].name} · ${shoalNames[(number+route)%shoalNames.length]}`,
+    guide:routeObjectives[(number+route)%routeObjectives.length],
+    chapter:route+1,index:local,route,routeStage:number,skill:true,nodes,
+    pace:.83-pressure*.09,
+    rivalDelay:Math.max(2,7-pressure*5-(boss?1:0)),
+    rivalTempo:1-pressure*.22-(boss?.055:0),
+    pincerChance:.26+pressure*.25+(boss?.08:0),
+    pincerAt:27-pressure*6-(boss?2:0),
+  };
+}
+
+const originalLevels=originalChapters.flatMap((chapter,id)=>chapter.battles.map((battle,index)=>expandBattle(battle,id,index)));
+const levels=Array.from({length:seaRoutes.length*stagesPerRoute},(_,i)=>
+  i<originalLevels.length?{...originalLevels[i],route:Math.floor(i/stagesPerRoute)}:routeBattle(i+1));
+const stageId=level=>level.routeStage?`route-${level.routeStage}`:`${level.chapter+1}-${level.index+1}`;
+const progressText=i=>`${seaRoutes[levels[i].route].name} · 第 ${i+1} / ${levels.length} 场`;

@@ -45,17 +45,18 @@ function firstContact(a,b,span){
   const t=(-slope-Math.sqrt(discriminant))/speed;
   return t>=0&&t<=span?t:null;
 }
-function arrive(s,f,at){
+function arrive(s,f,at,onCapture){
   const n=s.nodes[f.target];
   if(n.owner===f.owner){n.units+=f.units;return;}
   const impact=arrivalStrength(n,f.kind,f.units);
   if(impact!==f.units)s.effects.push({x:n.x,y:n.y,at,label:'岸防 −'+(f.units-impact),kind:'fort'});
   if(impact>n.units){
     n.units=impact-n.units;n.owner=f.owner;n.growth=0;n.pulseUntil=at+.65;
+    onCapture?.(f.owner);
   }
   else n.units-=impact;
 }
-function moveFleets(s,dt){
+function moveFleets(s,dt,onCapture){
   const events=[];
   for(let i=0;i<s.fleets.length;i++){
     const a=s.fleets[i];
@@ -68,7 +69,7 @@ function moveFleets(s,dt){
   events.sort((p,q)=>p.t-q.t||Number(Boolean(q.b))-Number(Boolean(p.b))||p.a.id-q.a.id||(p.b?.id??0)-(q.b?.id??0));
   for(const {t,a,b} of events){
     if(a.units===0||a.arrived)continue;
-    if(!b){arrive(s,a,s.time+t);a.arrived=true;continue;}
+    if(!b){arrive(s,a,s.time+t,onCapture);a.arrived=true;continue;}
     if(b.units===0||b.arrived)continue;
     const clash=Math.min(a.units,b.units);
     a.units-=clash;b.units-=clash;
@@ -81,7 +82,8 @@ function chooseEnemyMove(s,plan){
   const side=plan.owner;
   const reserves=s.nodes.flatMap((n,id)=>n.owner===side&&n.units>=12?[{id,node:n,units:Math.floor(n.units/2)}]:[]);
   const tactics=s.rivalTactics;
-  const rivalry=tactics&&tactics.mode!=='pincer'&&s.time<52;
+  const completedPincer=levels[s.mission].routeStage&&tactics?.nextPincer===Infinity;
+  const rivalry=tactics&&(tactics.mode!=='pincer'||completedPincer)&&s.time<52;
   let best=null;
   s.nodes.forEach((to,target)=>{
     if(to.owner===side)return;
@@ -115,6 +117,7 @@ function tryPincer(s,activeOpponents){
   const tactics=s.rivalTactics;
   if(!tactics||s.time<tactics.nextPincer||activeOpponents.length<2)return;
   if(tactics.mode==='mixed'&&(tactics.firstRivalOrder===null||s.time-tactics.firstRivalOrder<7))return;
+  if(levels[s.mission].routeStage&&s.time<38&&s.nodes.filter(n=>n.owner===1).length<3)return;
   tactics.nextPincer=s.time+1;
   const level=levels[s.mission];
   const player=s.nodes.flatMap((node,id)=>node.owner===1?[{node,id}]:[]);
@@ -155,7 +158,7 @@ function oppositeApproach(a,b,to){
   const ax=a.x-to.x,ay=a.y-to.y,bx=b.x-to.x,by=b.y-to.y;
   return ax*bx+ay*by<.35*Math.hypot(ax,ay)*Math.hypot(bx,by);
 }
-function step(s,dt){
+function step(s,dt,onCapture){
   if(s.mode!=='play')return;
   const level=levels[s.mission];
   for(const n of s.nodes){
@@ -164,7 +167,7 @@ function step(s,dt){
     const period=productionPeriod(n);
     if(n.growth>=period){n.units++;n.growth-=period;}
   }
-  moveFleets(s,dt);s.time+=dt;
+  moveFleets(s,dt,onCapture);s.time+=dt;
   s.effects=s.effects.filter(e=>s.time-e.at<1.1);
   const alive=new Set([...s.nodes.map(n=>n.owner),...s.fleets.map(f=>f.owner)]);
   const activeOpponents=s.enemies.filter(plan=>alive.has(plan.owner));
